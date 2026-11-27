@@ -192,7 +192,7 @@ internal static class ClientBridge
         }
         catch (Exception error) when (autoTarget != null)
         {
-            // The last-opened save did not open: nothing was created, repaired or deleted; the ordinary picker takes over.
+            // A tool-requested profile failed to open. Let the player choose from the picker.
             log.LogError("SAVE_AUTO_OPEN_FAILED " + autoTarget + ": " + error);
             string notice = launch.Startup.FailOpen(error);
             log.LogInfo(launch.Startup.LogLine());
@@ -222,7 +222,7 @@ internal static class ClientBridge
 
     private static void BindStartupPath(string path, string id)
     {
-        if (LocalLadder.Profile != null) throw new InvalidOperationException("A save is already bound for this process.");
+        if (LocalLadder.Profile != null) throw new InvalidOperationException("A profile is already active for this process.");
         // The unfinished-start marker is down BEFORE anything opens the save: an auto-open's was written by Decide before its checks, any
         // other bind writes it here. A crash, hang or native fault anywhere in the open leaves it, so the next launch shows the picker; a
         // failure that is caught here removes it again. A marker that cannot be written never refuses an open (a pick or a new save must
@@ -247,7 +247,7 @@ internal static class ClientBridge
 
     private static void BindStartupOpened(string path, string id)
     {
-        LocalProfile profile = SelectedProfile.OpenStartup(launch, path, launch.AutoOpenTargetId != null);
+        LocalProfile profile = SelectedProfile.OpenStartup(launch, path, id != null);
         try
         {
             if (profile.WelcomeSkipped != null) log.LogWarning("SAVE_WELCOME_SKIPPED missing profile.xml but " + profile.WelcomeSkipped + ": " + path);

@@ -46,6 +46,7 @@ internal static class StartupSaveChecks
         RealOpenFailureLeavesBytes(Path.Combine(root, "real-open"));
         PendingMatchSave(Path.Combine(root, "pending"));
         MarkerBeforeChecks(Path.Combine(root, "marker-first"));
+        EraRoundTrip(Path.Combine(root, "era"));
         HomeSettle();
         Launch(Path.Combine(root, "launch"));
         RelaunchUnavailable(Path.Combine(root, "relaunch"));
@@ -69,16 +70,16 @@ internal static class StartupSaveChecks
         using (var profile = new LocalProfile(oldLegacy, new ProfileOptions())) profile.PersistNewProfile(new ProfileOptions());
         Picker(Decide(oldLegacy), "no-catalog", "root save without a catalog -> picker");
         Check(!File.Exists(Path.Combine(root, "old", "profiles.xml")), "deciding never wrote a catalog");
-        // One save, recorded (Create records the first save): opens automatically.
         var a = Add(legacy, "Save A");
         var one = Decide(legacy);
-        Check(one.IsAuto && one.Reason == "last-opened" && one.TargetId == a.Id && one.TargetPath == Profile(legacy, a.Id) && one.TargetName == "Save A" && one.Notice == null,
-            "one recorded save opens automatically");
-        // Several saves: the recorded one.
+        Picker(one, "choose-profile", "one recorded profile still requires selection");
+        Check(one.TargetId == a.Id && one.TargetPath == null && one.Notice == null, "last selection can be highlighted without opening it");
+        // Several profiles also require a choice.
         var b = Add(legacy, "Save B"); var c = Add(legacy, "Save C");
         ProfileCatalog.CommitSelection(legacy, b.Id);
         var several = Decide(legacy);
-        Check(several.IsAuto && several.TargetId == b.Id && several.Reason == "last-opened", "several saves: the recorded one opens");
+        Picker(several, "choose-profile", "several profiles still require selection");
+        Check(several.TargetId == b.Id, "the last selection can be highlighted");
         ProfileCatalog.CommitSelection(legacy, c.Id);
         Check(Decide(legacy).TargetId == c.Id, "the record follows the last pick");
         // The last-opened save was deleted (soft delete clears the record): nothing recorded, several saves or one.
@@ -89,14 +90,14 @@ internal static class StartupSaveChecks
         Picker(lone, "none-recorded", "recorded save deleted, one left -> picker (the client never opens a save the player has not opened)");
         Check(lone.Notice == null, "nothing recorded is not an error: no popup");
         ProfileCatalog.CommitSelection(legacy, a.Id);
-        Check(Decide(legacy).IsAuto, "picking the survivor records it");
+        Picker(Decide(legacy), "choose-profile", "picking the survivor records it for the next picker");
         // A listed slot whose folder was moved away behind the catalog's back.
         var gone = Add(legacy, "Save Gone");
         ProfileCatalog.CommitSelection(legacy, gone.Id);
         Directory.Move(SlotDir(legacy, gone.Id), SlotDir(legacy, gone.Id) + "-away");
-        var missingFolder = Decide(legacy);
+        var missingFolder = Decide(legacy, gone.Id);
         Picker(missingFolder, "save-missing", "recorded save's folder vanished -> picker");
-        Check(missingFolder.TargetName == "Save Gone" && missingFolder.Notice != null && missingFolder.Notice.Contains("Save Gone") && missingFolder.NoticeHeader == "SAVE UNAVAILABLE",
+        Check(missingFolder.TargetName == "Save Gone" && missingFolder.Notice != null && missingFolder.Notice.Contains("Save Gone") && missingFolder.NoticeHeader == "PROFILE UNAVAILABLE",
             "the player is told which save and why the picker came up");
         Check(!Directory.Exists(SlotDir(legacy, gone.Id)), "the missing save was not recreated");
     }
@@ -109,20 +110,20 @@ internal static class StartupSaveChecks
         ProfileCatalog.CommitSelection(legacy, target.Id);
         string profile = Profile(legacy, target.Id), options = Path.Combine(SlotDir(legacy, target.Id), "profile-options.xml");
         byte[] good = File.ReadAllBytes(profile), goodOptions = File.ReadAllBytes(options);
-        Check(Decide(legacy).IsAuto, "baseline opens");
+        Check(Decide(legacy, target.Id).IsAuto, "explicit request opens the profile");
 
         void Case(string name, string reason, Action damage, Action restore)
         {
             damage();
             string before = Saves(legacy);
             StartupChoice choice = null;
-            try { choice = Decide(legacy); } catch (Exception error) { throw new Exception("Decide threw for " + name + ": " + error.Message); }
+            try { choice = Decide(legacy, target.Id); } catch (Exception error) { throw new Exception("Decide threw for " + name + ": " + error.Message); }
             Picker(choice, reason, name);
             Check(choice.TargetName == "Target" && choice.Notice != null && choice.Notice.Contains("Target") && choice.Notice.Contains("nothing was changed")
                 && choice.Notice.Contains("only checked, not opened") && choice.Notice.Contains("log"), name + ": notice names the save and says it was only checked");
             Check(Saves(legacy) == before, name + ": the check changed save bytes or the folder tree");
             restore();
-            Check(Decide(legacy).IsAuto, name + ": a restored save opens again");
+            Check(Decide(legacy, target.Id).IsAuto, name + ": a restored profile opens again");
         }
         void Put(string path, byte[] bytes) { File.Delete(path); File.WriteAllBytes(path, bytes); }
         var serializer = new XmlSerializer(typeof(LocalProfileData));
@@ -154,7 +155,7 @@ internal static class StartupSaveChecks
         foreach (int version in new[] { 13, 14, 15, 16 })
         {
             var old = Load(); old.Version = version; Save(old);
-            Check(Decide(legacy).IsAuto, "startup accepts V" + version + " for upgrade");
+            Check(Decide(legacy, target.Id).IsAuto, "startup accepts V" + version + " for upgrade");
         }
         Put(profile, good);
         // The other save was never involved.
@@ -170,7 +171,7 @@ internal static class StartupSaveChecks
         Picker(broken, "check-failed", "unreadable catalog -> picker choice, not an exception");
         Check(broken.Failure != null, "the catalog failure is kept for the log");
         File.Copy(catalogBackup, catalog, true); File.Copy(catalog + ".bak.keep", catalog + ".bak", true);
-        Check(Decide(legacy).IsAuto, "catalog restored");
+        Picker(Decide(legacy), "choose-profile", "catalog restored");
     }
 
     // One-shot tool requests: force the picker, force a save, junk. Always consumed.
@@ -226,13 +227,14 @@ internal static class StartupSaveChecks
         var a = Add(legacy, "Save A"); var b = Add(legacy, "Save B");
         ProfileCatalog.CommitSelection(legacy, b.Id);
         string run = Guid.NewGuid().ToString("D"), other = Guid.NewGuid().ToString("D");
-        Check(ProfileCatalog.Startup.ReadMarker(legacy) == null && Decide(legacy).IsAuto, "no marker -> opens");
+        Check(ProfileCatalog.Startup.ReadMarker(legacy) == null, "no marker before opening");
+        Picker(Decide(legacy), "choose-profile", "no marker still shows the picker");
         ProfileCatalog.Startup.Arm(legacy, b.Id, run);
         var marker = ProfileCatalog.Startup.ReadMarker(legacy);
         Check(marker != null && marker.SlotId == b.Id && marker.RunId == run, "marker records the slot and the run");
         var unclean = Decide(legacy);
         Picker(unclean, "unclean-exit", "a leftover marker -> picker");
-        Check(unclean.TargetName == "Save B" && unclean.Notice != null && unclean.Notice.Contains("Save B") && unclean.NoticeHeader == "CHOOSE A SAVE",
+        Check(unclean.TargetName == "Save B" && unclean.Notice != null && unclean.Notice.Contains("Save B") && unclean.NoticeHeader == "CHOOSE A PROFILE",
             "the player is told why, kindly");
         Check(ProfileCatalog.SelectedId(legacy) == b.Id, "the record is not touched: choosing it again still works");
         // Another run never clears it; the picker keeps coming until a save reaches Home.
@@ -244,7 +246,7 @@ internal static class StartupSaveChecks
         Check(ProfileCatalog.Startup.Confirm(legacy, other) && ProfileCatalog.Startup.ReadMarker(legacy) == null, "Home clears it");
         Check(!File.Exists(ProfileCatalog.Startup.MarkerPath(legacy) + ".tmp"), "no temp file left");
         ProfileCatalog.CommitSelection(legacy, b.Id);
-        Check(Decide(legacy).IsAuto, "after Home the recorded save opens again");
+        Picker(Decide(legacy), "choose-profile", "after Home the next launch shows the picker");
         // A damaged marker still counts as unfinished (fail toward the picker).
         File.WriteAllText(ProfileCatalog.Startup.MarkerPath(legacy), "\0\0garbage");
         var garbled = ProfileCatalog.Startup.ReadMarker(legacy);
@@ -273,7 +275,7 @@ internal static class StartupSaveChecks
         var b = Add(legacy, "Save B");
         Check(ProfileCatalog.SelectedId(legacy) == a.Id, "creating another save does not change the record until it opens");
         string saves = Saves(legacy);
-        Check(Decide(legacy).TargetId == a.Id, "so the launch still opens the one that was open");
+        Check(Decide(legacy).TargetId == a.Id, "so the picker still highlights the one that was open");
         string catalog = File.ReadAllText(ProfileCatalog.CatalogPath(legacy));
         Decide(legacy); Decide(legacy, "picker"); Decide(legacy, b.Id);
         Check(File.ReadAllText(ProfileCatalog.CatalogPath(legacy)) == catalog && Saves(legacy) == saves, "deciding writes neither the catalog nor any save");
@@ -297,7 +299,7 @@ internal static class StartupSaveChecks
         data.GrindTier = "no-such-tier";
         using (var stream = File.Create(path)) serializer.Serialize(stream, data);
         string before = Saves(legacy);
-        var choice = Decide(legacy);
+        var choice = Decide(legacy, target.Id);
         Check(choice.IsAuto, "the preflight cannot see a content-level problem");
         var options = ProfileCatalog.OptionsForProfile(legacy, path);
         bool refused = false;
@@ -322,7 +324,7 @@ internal static class StartupSaveChecks
         var options = ProfileCatalog.OptionsForProfile(legacy, path);
         using (var profile = new LocalProfile(path, options)) profile.Begin("mage", "warrior", 7);
         string before = Saves(legacy);
-        var choice = Decide(legacy);
+        var choice = Decide(legacy, target.Id);
         Check(choice.IsAuto && choice.TargetId == target.Id, "a save with a pending match is still auto-opened");
         Check(Saves(legacy) == before, "deciding left the pending match unsettled on disk");
         // The open then does what the picker's open does: RecoverInterrupted settles it.
@@ -339,16 +341,16 @@ internal static class StartupSaveChecks
         ProfileCatalog.FaultHook = phase => { if (phase.StartsWith("startup-checks:")) seen = ProfileCatalog.Startup.ReadMarker(legacy)?.RunId; };
         try
         {
-            var choice = Decide(legacy, null, false);   // no run id: nothing is armed (decision tests)
+            var choice = Decide(legacy, target.Id, false);   // no run id: nothing is armed (decision tests)
             Check(choice.IsAuto && seen == null && ProfileCatalog.Startup.ReadMarker(legacy) == null, "without a run id the decision arms nothing");
             seen = null;
-            choice = ProfileCatalog.Startup.Decide(legacy, null, null, run);
+            choice = ProfileCatalog.Startup.Decide(legacy, target.Id, null, run);
             Check(choice.IsAuto && seen == run, "the marker is already down when the target is first read");
             Check(ProfileCatalog.Startup.ReadMarker(legacy)?.RunId == run && ProfileCatalog.Startup.ReadMarker(legacy)!.SlotId == target.Id, "and stays down for an auto-open");
             // A picker outcome after arming disarms again: a refused target must not look like an unfinished start.
             ProfileCatalog.Startup.Confirm(legacy, run);
             File.Delete(Profile(legacy, target.Id));
-            choice = ProfileCatalog.Startup.Decide(legacy, null, null, run);
+            choice = ProfileCatalog.Startup.Decide(legacy, target.Id, null, run);
             Picker(choice, "save-missing", "damaged target");
             Check(seen == run && ProfileCatalog.Startup.ReadMarker(legacy) == null, "armed before the checks, cleared again when they refuse");
             // An old run's leftover marker (from a failed open) is replaced by the new run's, then cleared with it.
@@ -357,6 +359,37 @@ internal static class StartupSaveChecks
             Check(ProfileCatalog.Startup.ReadMarker(legacy) != null, "an unclean-exit picker keeps the marker");
         }
         finally { ProfileCatalog.FaultHook = null; }
+    }
+
+    private static void EraRoundTrip(string root)
+    {
+        Directory.CreateDirectory(root);
+        string legacy = Path.Combine(root, "profile.xml");
+        var first = Add(legacy, "First", new ProfileOptions { NpcDifficulty = NpcDifficultyIds.Easy });
+        var other = Add(legacy, "Other");
+        string path = Profile(legacy, first.Id);
+        var options = ProfileCatalog.OptionsForProfile(legacy, path);
+        var serializer = new XmlSerializer(typeof(LocalProfileData));
+        LocalProfileData data;
+        using (var stream = File.OpenRead(path)) data = (LocalProfileData)serializer.Deserialize(stream)!;
+        Check(data.CurrentEraId == ProfileCatalog.MetaId && ProfileCatalog.ReadCurrentEraId(path) == ProfileCatalog.MetaId,
+            "new profiles store the starting era");
+        int gold = data.GoldBalance;
+        data.CurrentEraId = null;
+        using (var stream = File.Create(path)) serializer.Serialize(stream, data);
+        using (var profile = new LocalProfile(path, options))
+            Check(profile.CurrentEraId == ProfileCatalog.MetaId && profile.NpcDifficulty == NpcDifficultyIds.Easy,
+                "older profiles get their existing era and keep their chosen difficulty");
+        Check(ProfileCatalog.ReadCurrentEraId(path) == ProfileCatalog.MetaId, "picker reads the era of older profiles");
+
+        data.CurrentEraId = "test-era";
+        using (var stream = File.Create(path)) serializer.Serialize(stream, data);
+        using (var profile = new LocalProfile(path, options))
+            Check(profile.CurrentEraId == "test-era" && profile.SetNpcDifficulty(NpcDifficultyIds.Hard), "a normal profile edit uses the stored era");
+        using (var stream = File.OpenRead(path)) data = (LocalProfileData)serializer.Deserialize(stream)!;
+        Check(data.CurrentEraId == "test-era" && data.GoldBalance == gold && ProfileCatalog.ReadCurrentEraId(path) == "test-era"
+            && ProfileCatalog.ProfilePathForId(legacy, first.Id) == path, "reopen keeps the profile id, era and gold after an ordinary write");
+        Check(ProfileCatalog.ReadCurrentEraId(Profile(legacy, other.Id)) == ProfileCatalog.MetaId, "the other profile keeps its own era");
     }
 
     private static void HomeSettle()
@@ -383,11 +416,10 @@ internal static class StartupSaveChecks
         var a = Add(legacy, "Save A"); var b = Add(legacy, "Save B");
         ProfileCatalog.CommitSelection(legacy, b.Id);
         string run = Run();
-        var auto = ProfileCatalog.Startup.ResolveLaunch(legacy, run, null, null);
-        Check(!auto.Selector && auto.Profile == Profile(legacy, b.Id) && auto.RelaunchTarget == null && auto.Startup.IsAuto && auto.Startup.TargetId == b.Id
-            && auto.Startup.Reconciled, "last-opened save auto-opens: no selector, its own path");
-        Check(ProfileCatalog.Startup.ReadMarker(legacy)?.RunId == run, "and the marker is down for that run");
-        ProfileCatalog.Startup.Confirm(legacy, run);
+        var picker = ProfileCatalog.Startup.ResolveLaunch(legacy, run, null, null);
+        Check(picker.Selector && picker.Profile == legacy && picker.RelaunchTarget == null && !picker.Startup.IsAuto && picker.Startup.TargetId == b.Id
+            && picker.Startup.Reconciled, "ordinary launch starts unbound in the profile picker");
+        Check(ProfileCatalog.Startup.ReadMarker(legacy) == null, "opening the picker arms no profile");
         // Tool requests are consumed by the launch.
         File.WriteAllText(ProfileCatalog.Startup.RequestPath(legacy), "picker");
         var forced = ProfileCatalog.Startup.ResolveLaunch(legacy, Run(), null, null);
@@ -406,7 +438,19 @@ internal static class StartupSaveChecks
         string token = ProfileCatalog.RequestRelaunch(legacy, old, a.Id);
         var relaunch = ProfileCatalog.Startup.ResolveLaunch(legacy, next, old, token);
         Check(!relaunch.Selector && relaunch.RelaunchTarget == a.Id && relaunch.Profile == Profile(legacy, a.Id) && relaunch.Startup == null
-            && ProfileCatalog.Startup.ReadMarker(legacy) == null, "Change Profile relaunch: its target, no startup decision");
+            && ProfileCatalog.Startup.ReadMarker(legacy) == null, "explicit profile relaunch still binds its target");
+        ProfileCatalog.CompleteRelaunch(legacy, next, old, token, a.Id);
+
+        old = next; next = Run();
+        string before = Saves(legacy);
+        token = ProfileCatalog.RequestRelaunch(legacy, old, ProfileCatalog.PickerRelaunchTarget);
+        var switched = ProfileCatalog.Startup.ResolveLaunch(legacy, next, old, token);
+        Check(switched.Selector && switched.Profile == legacy && switched.RelaunchTarget == null && switched.Startup.Reason == "requested-picker",
+            "Change Profile relaunch opens the startup picker unbound");
+        Check(!File.Exists(ProfileCatalog.SwitchPath(legacy)) && ProfileCatalog.SelectedId(legacy) == a.Id
+            && ProfileCatalog.Startup.ReadMarker(legacy) == null, "picker relaunch consumes the request, leaving the last selected profile recorded");
+        Check(Saves(legacy) == before, "consuming the switch request does not change profile files");
+        Reject(() => ProfileCatalog.Startup.ResolveLaunch(legacy, Run(), old, token), "picker relaunch token cannot be reused");
     }
 
     // Finding: Change Profile to B with B damaged before the relaunch must not silently reopen A.
@@ -421,7 +465,7 @@ internal static class StartupSaveChecks
         string before = Saves(legacy);
         var result = ProfileCatalog.Startup.ResolveLaunch(legacy, next, old, token);
         Check(result.Selector && !result.Startup.IsAuto && result.Startup.Reason == "relaunch-unavailable" && result.RelaunchTarget == null
-            && result.Startup.Notice == ProfileCatalog.StartupNotice.RelaunchUnavailable && result.Startup.NoticeHeader == "SAVE UNAVAILABLE",
+            && result.Startup.Notice == ProfileCatalog.StartupNotice.RelaunchUnavailable && result.Startup.NoticeHeader == "PROFILE UNAVAILABLE",
             "an unusable relaunch target shows the picker with a notice: " + result.Startup.Reason);
         Check(ProfileCatalog.SelectedId(legacy) == a.Id && ProfileCatalog.Startup.ReadMarker(legacy) == null, "A was not opened (no marker) and stays recorded");
         Check(Saves(legacy) == before, "no save byte changed");
@@ -450,9 +494,9 @@ internal static class StartupSaveChecks
         try { Check(ProfileCatalog.Delete(legacy, victim.Id, null).Outcome == "move-deferred", "deferred delete"); } finally { ProfileCatalog.FaultHook = null; }
         Check(Directory.Exists(SlotDir(legacy, victim.Id)), "the folder lingers after a deferred delete");
         var launch = ProfileCatalog.Startup.ResolveLaunch(legacy, Run(), null, null);
-        Check(launch.Startup.IsAuto && launch.Startup.TargetId == keep.Id && !Directory.Exists(SlotDir(legacy, victim.Id))
+        Check(launch.Selector && !launch.Startup.IsAuto && launch.Startup.TargetId == keep.Id && !Directory.Exists(SlotDir(legacy, victim.Id))
             && launch.Startup.LogLines.Any(line => line.Contains("moved=" + victim.Id)) && ProfileCatalog.DeletedFolders(legacy).Any(name => name.StartsWith(victim.Id)),
-            "an auto-open launch retries the deferred move and logs it");
+            "an ordinary picker launch retries the deferred move and logs it");
     }
 
     // Finding: seeding, requireExisting and the open itself, run for real (SelectedProfile.cs is compiled into this suite).
@@ -462,6 +506,7 @@ internal static class StartupSaveChecks
         var target = Add(legacy, "Target"); ProfileCatalog.CommitSelection(legacy, target.Id);
         string path = Profile(legacy, target.Id), fixture = Path.Combine(root, "fixture.xml");
         File.WriteAllText(fixture, "fixture");
+        File.WriteAllText(ProfileCatalog.Startup.RequestPath(legacy), target.Id);
         var auto = ProfileCatalog.Startup.ResolveLaunch(legacy, Run(), null, null);
         var launch = new OfflineLaunchContext(Run(), null, auto.Profile, 0, false, legacy, auto.Selector, null, null, null, null, auto.Startup);
         Check(launch.AutoOpenTargetId == target.Id && !launch.ShowProfileSelector, "the context carries the auto target");
@@ -484,7 +529,7 @@ internal static class StartupSaveChecks
         var pendingOptions = ProfileCatalog.OptionsForProfile(legacy, pendingPath);
         using (var profile = new LocalProfile(pendingPath, pendingOptions)) profile.Begin("mage", "warrior", 7);
         var pendingLaunch = new OfflineLaunchContext(Run(), null, pendingPath, 0, false, legacy, false, null, null, null, null,
-            new StartupChoice { Mode = "auto", TargetId = again.Id, TargetPath = pendingPath, Reason = "last-opened" });
+            new StartupChoice { Mode = "auto", TargetId = again.Id, TargetPath = pendingPath, Reason = "requested-save" });
         using (var opened = SelectedProfile.OpenStartup(pendingLaunch, pendingPath, true))
             Check(!opened.HasPendingMatch && opened.History.Any(match => match.Result == "Abandoned"), "the open settles a pending match as an Abandoned loss, same as picked");
     }
@@ -496,7 +541,7 @@ internal static class StartupSaveChecks
         Check(ProfileCatalog.SelectedId(legacy) == null && ProfileCatalog.List(legacy).Count == 1, "Create(record: false) leaves nothing recorded until the save opens");
         Picker(Decide(legacy), "none-recorded", "so a save that never opened is not auto-opened next launch");
         ProfileCatalog.CommitSelection(legacy, first.Id);
-        Check(Decide(legacy).IsAuto, "recording after the open makes it the auto-open");
+        Picker(Decide(legacy), "choose-profile", "recording after the open still requires the next launch to show the picker");
     }
 
     private static void UndeletableRequest(string root)
@@ -524,8 +569,8 @@ internal static class StartupSaveChecks
         var a = Add(legacy, "Save A"); ProfileCatalog.CommitSelection(legacy, a.Id);
         Directory.CreateDirectory(ProfileCatalog.Startup.MarkerPath(legacy) + ".tmp");
         string run = Run();
-        // Auto-open: Decide's own Arm fails -> picker, never an exception, never an auto-open without the protection.
-        var choice = ProfileCatalog.Startup.Decide(legacy, null, null, run);
+        // A tool-requested auto-open must arm its marker before opening.
+        var choice = ProfileCatalog.Startup.Decide(legacy, a.Id, null, run);
         Picker(choice, "check-failed", "an auto-open whose marker cannot be written goes to the picker");
         Check(choice.Failure != null && choice.Notice != null && ProfileCatalog.Startup.ReadMarker(legacy) == null, "with the failure kept and no marker");
         // Picks and created saves: BeginOpen never throws and the open proceeds without the marker.

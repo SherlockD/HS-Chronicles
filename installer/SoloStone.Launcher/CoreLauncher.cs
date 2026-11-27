@@ -71,6 +71,7 @@ namespace SoloStone
     }
     public static class Relaunch
     {
+        public const string PickerTarget = "picker";
         public static string Read(string path,string previousRun,DateTime launchedUtc) => Read(path,previousRun,launchedUtc,out _);
         public static string Read(string path,string previousRun,DateTime launchedUtc,out string target) {
             target=null;
@@ -86,7 +87,7 @@ namespace SoloStone
             if(doc.DocumentElement.Name!="ProfileSwitchRequest" || doc.SelectSingleNode("/ProfileSwitchRequest/Version")?.InnerText!="1"
                 || doc.SelectSingleNode("/ProfileSwitchRequest/RunId")?.InnerText!=previousRun
                 || token==null || token.Length!=32 || !token.All(Uri.IsHexDigit)
-                || (target!="legacy" && !Guid.TryParseExact(target,"N",out id)))
+                || (target!=PickerTarget && target!="legacy" && !Guid.TryParseExact(target,"N",out id)))
                 throw new InvalidOperationException("Save-switch request does not match this game. Start SoloStone again.");
             return token;
         }

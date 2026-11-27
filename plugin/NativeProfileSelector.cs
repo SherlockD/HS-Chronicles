@@ -99,10 +99,10 @@ internal static class NativeProfileSelector
     internal static void RecoverStartup(string error)
     {
         startupPending = true;
-        startupError = "The chosen save could not open. Choose another. " + error; startupErrorHeader = null;
+        startupError = "The selected profile could not open. Choose another. " + error; startupErrorHeader = null;
     }
 
-    // The last-opened save passed the startup checks but failed to open: the ordinary picker, with the notice on top.
+    // The explicit tool request passed preflight but failed to open. Show the picker and its notice.
     internal static void RecoverAutoOpen(string notice, string header)
     {
         startupPending = true;
@@ -167,7 +167,9 @@ internal static class NativeProfileSelector
         try
         {
             menuButton = __instance.CreateMenuButton(NativeGameMenuTidy.ProfileRow, NativeGameMenuTidy.ProfileLabel, _ => {
-                BnetBar.Get()?.HideGameMenu(); Open(false);
+                BnetBar.Get()?.HideGameMenu();
+                if (launch.InstalledRoot != null) Switch(ProfileCatalog.PickerRelaunchTarget);
+                else Open(false);
             });
         }
         catch (Exception error) { menuButton = null; log?.LogWarning("SAVE_SELECTOR menu row unavailable: " + error.Message); }
@@ -223,13 +225,13 @@ internal static class NativeProfileSelector
         using (var reader = System.Xml.XmlReader.Create(path, new System.Xml.XmlReaderSettings {
             DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 64 * 1024 * 1024
         }))
-            // LocalProfileData serializes GrindTier (optional), NpcDifficulty (optional), then Version and the rest: the first
-            // other depth-1 element means the field is absent, so an old save is never read to its end.
+            // These optional fields precede Version and the rest of the profile.
+            // Stop at the first other root field so the picker does not scan match history.
             while (reader.Read())
             {
                 if (reader.NodeType != System.Xml.XmlNodeType.Element || reader.Depth != 1) continue;
                 if (reader.LocalName == "NpcDifficulty") return NpcDifficultyIds.Resolve(reader.ReadElementContentAsString());
-                if (reader.LocalName != "GrindTier") break;
+                if (reader.LocalName != "CurrentEraId" && reader.LocalName != "GrindTier") break;
             }
         return NpcDifficultyIds.Default;
     }
@@ -245,6 +247,13 @@ internal static class NativeProfileSelector
     }
 
     internal static void RefreshSlotDifficulties() => slotDifficulties.Clear();
+
+    internal static string SlotEraName(string id)
+    {
+        if (IsOpenSave(id, null) && LocalLadder.Profile != null) return ProfileCatalog.EraName(LocalLadder.Profile.CurrentEraId);
+        try { return ProfileCatalog.EraName(ProfileCatalog.ReadCurrentEraId(ProfileCatalog.ProfilePathForId(RootProfilePath, id))); }
+        catch (Exception error) { Log("PROFILE_SELECTOR era id=" + id + " unavailable: " + error.Message); return "Unknown era"; }
+    }
 
     // Back from a Pace page opened in Options > SoloStone Options: that panel again, else Options.
     internal static void ReturnToOptions() => NativeOptionsPanels.ReturnFromPace();
@@ -278,7 +287,7 @@ internal static class NativeProfileSelector
             ClientBridge.BindStartupProfile(id);
             EnterCurrent();
         }
-        catch (Exception error) { popup?.Open(true); ShowError("Save could not finish opening. Recovery may have repaired it; retry or choose another. " + error.Message); }
+        catch (Exception error) { popup?.Open(true); ShowError("The profile could not finish opening. Retry or choose another. " + error.Message); }
     }
 
     internal static void Switch(string id)
@@ -287,8 +296,8 @@ internal static class NativeProfileSelector
         if (blocked != null) { ShowError(blocked); return; }
         try
         {
-            ProfileCatalog.RequestRelaunch(launch.RootProfilePath, launch.RunId, id);
             NativeCollectionStatus.FlushPendingSeen(true, true);
+            ProfileCatalog.RequestRelaunch(launch.RootProfilePath, launch.RunId, id);
             quitting = true; popup?.ShowLoading(); Application.Quit(46);
         }
         catch (Exception error) { ShowError(error.Message); }
@@ -316,7 +325,7 @@ internal static class NativeProfileSelector
             NativeCollectionStatus.FlushPendingSeen(true, true);
             quitting = true; popup?.ShowLoading(); Application.Quit(46);
         }
-        catch (Exception error) { if (startupPending) popup?.Open(true); ShowError("Save creation/opening did not finish. Retry or choose another. " + error.Message); }
+        catch (Exception error) { if (startupPending) popup?.Open(true); ShowError("Profile creation or opening did not finish. Retry or choose another. " + error.Message); }
     }
 
     // Every refused or failed attempt logs one PROFILE_DELETE line, same formatter as ProfileCatalog.Delete. Opening the confirm
@@ -386,7 +395,7 @@ internal static class NativeProfileSelector
     }
 #endif
 
-    // `hslive startup-save`: how this launch chose its save. autoOpened: the last-opened save opened with no picker.
+    // `hslive startup-save`: autoOpened reports an explicit tool request that opened a profile directly.
     // pickerShown: the startup picker is on screen right now. saveId: the save bound to this process (null while unbound).
     private static JsonNode StartupState()
     {
@@ -416,7 +425,7 @@ internal static class NativeProfileSelector
     private static void ShowAlert(string popupId, string text, string header)
     {
         DialogManager.Get()?.ShowPopup(new AlertPopup.PopupInfo {
-            m_id = popupId, m_headerText = header ?? "SAVE UNAVAILABLE", m_text = text,
+            m_id = popupId, m_headerText = header ?? "PROFILE UNAVAILABLE", m_text = text,
             m_showAlertIcon = true, m_responseDisplay = AlertPopup.ResponseDisplay.CANCEL,
             m_cancelText = NativeStrings.Get("GLOBAL_BACK", "BACK").ToUpperInvariant(), m_keyboardEscIsCancel = true
         });
@@ -432,7 +441,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
 {
     private const float PairScale = .88f;
     // Owner 2026-10-28: the section is "Sandbox" on screen; ids (save.cheat.*) and code names keep cheat.
-    internal const string CheatNote = "Sandbox options are locked in when the save is created.", CheatTitle = "Sandbox (optional)", CheatTooltipHeader = "Sandbox";
+    internal const string CheatNote = "Sandbox options are set when you create the profile.", CheatTitle = "Sandbox (optional)", CheatTooltipHeader = "Sandbox";
     private static readonly Color LabelColor = new Color(.96f, .87f, .66f), DeleteColor = new Color(.9f, .2f, .15f);
     private sealed class Slice { internal GameObject Object; internal bool Text, Both; internal Vector3 Padding; }
 
@@ -547,7 +556,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
         paceMeshes.Clear();
         owned.Clear(); rows.Clear(); slices.Clear(); beforeLayout.Clear(); afterLayout.Clear(); unsized.Clear(); fieldRows.Clear(); fieldsContent = null; fieldsLayout = null; controls.Clear(); selectedControls.Clear();
         nameText = null; nameColor = null; unitPlank = null; cheatList = null; cheatRows = 0; cheatPitch = 0; unitWorld = 0; unitScale = 1; kitScale = 0;
-        Header(wizard ? "Create save" : pacePage ? (difficultyPage ? "NPC Difficulty" : "Pace") : "Choose save");
+        Header(wizard ? "Create profile" : pacePage ? (difficultyPage ? "NPC Difficulty" : "Pace") : "Choose profile");
         Axes();
         if (wizard) BuildWizard(ProfileFormKit.Ready); else if (pacePage) { if (difficultyPage) BuildDifficulty(ProfileFormKit.Ready); else BuildPace(ProfileFormKit.Ready); } else BuildSlots(ProfileFormKit.Ready);
         if (shown) Show();
@@ -563,7 +572,9 @@ internal sealed class NativeProfileMenu : ButtonListMenu
         {
             var captured = slot;
             string difficulty = NativeProfileSelector.SlotDifficulty(slot.Id);
-            string label = slot.Name + " · " + (difficulty == null ? "Unknown difficulty" : NpcDifficultyIds.Name(difficulty)) + (slot.Unavailable == null ? "" : " (unavailable: " + slot.Unavailable + ")");
+            string details = NativeProfileSelector.SlotEraName(slot.Id) + " · " + (difficulty == null ? "Unknown difficulty" : NpcDifficultyIds.Name(difficulty));
+            if (slot.Unavailable != null) details += " (unavailable: " + slot.Unavailable + ")";
+            string label = slot.Name + " · " + details;
             if (manage) { ManageRow(captured, label, slot.Id == selected, NativeProfileSelector.IsOpenSave(slot.Id, selected)); continue; }
             UIBButton row = Plank("ProfileSlot-" + slot.Id, "save.slot:" + slot.Id, label, _ => {
                 if (captured.Unavailable != null) return;
@@ -571,7 +582,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
                 else if (captured.Id == selected) NativeProfileSelector.EnterCurrent();
                 else NativeProfileSelector.Switch(captured.Id);
             });
-            if (slot.Id == selected) { selectedControls.Add(row); MarkCurrent(row, kit, slot.Name, difficulty == null ? "Unknown difficulty" : NpcDifficultyIds.Name(difficulty)); }
+            if (slot.Id == selected) { selectedControls.Add(row); MarkCurrent(row, kit, slot.Name, details); }
             // A damaged save stays listed so its name is not silently lost, but it cannot be opened.
             if (slot.Unavailable != null) row.SetEnabled(false);
         }
@@ -580,7 +591,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
         // "+ New save" and "Manage" (or "Done") share a row; manage mode hides "+ New save".
         bool canAdd = !manage && slots.Length < ProfileCatalog.MaximumSlots, canManage = slots.Length > 0 && NativeProfileSelector.ManageAllowed(startup);
         if (slots.Length > 0 && (canAdd || canManage)) Divider();
-        UIBButton add = canAdd ? Plank("ProfileAdd", "save.add", "+ New save", _ => StartWizard(slots), !canManage) : null;
+        UIBButton add = canAdd ? Plank("ProfileAdd", "save.add", "+ New profile", _ => StartWizard(slots), !canManage) : null;
         UIBButton toggle = canManage ? Plank("ProfileManage", NativeSaveDeleteText.ManageId, manage ? NativeStrings.Get("GLOBAL_DONE", NativeSaveDeleteText.DoneLabel) : NativeSaveDeleteText.ManageLabel,
             _ => { manage = !manage; Build(); }, add == null) : null;
         if (add != null && toggle != null) Pair("ProfileManageActions", add, toggle);
@@ -624,8 +635,8 @@ internal sealed class NativeProfileMenu : ButtonListMenu
     private void StartWizard(ProfileSlot[] slots)
     {
         int number = 1; var names = new HashSet<string>(slots.Select(slot => slot.Name), StringComparer.OrdinalIgnoreCase);
-        while (names.Contains("Save " + number)) number++;
-        saveName = "Save " + number; options = new ProfileOptions { GrindTier = GrindTiers.Default.Id, NpcDifficulty = NpcDifficultyIds.NewSaveDefault }; cheatsOpen = false; wizard = true; Build();
+        while (names.Contains("Profile " + number)) number++;
+        saveName = "Profile " + number; options = new ProfileOptions { GrindTier = GrindTiers.Default.Id, NpcDifficulty = NpcDifficultyIds.NewSaveDefault }; cheatsOpen = false; wizard = true; Build();
     }
 
     private void BuildWizard(bool kit)
@@ -635,10 +646,10 @@ internal sealed class NativeProfileMenu : ButtonListMenu
         var cancel = Plank("ProfileCreateCancel", "save.cancel", NativeStrings.Get("GLOBAL_CANCEL", "Cancel"), _ => { wizard = false; Build(); }, false);
         if (kit) KitScale();
         PegUIElement name = Plate("ProfileName", "Name", saveName, out nameText);
-        if (name == null) { Label("ProfileNameLabel", "Save name", LabelColor, 1); var plank = Plank("ProfileName", "save.name", saveName, _ => EditName()); name = plank; nameText = ProfileFormKit.Label(plank); }
+        if (name == null) { Label("ProfileNameLabel", "Profile name", LabelColor, 1); var plank = Plank("ProfileName", "save.name", saveName, _ => EditName()); name = plank; nameText = ProfileFormKit.Label(plank); }
         else { controls[name] = "save.name"; name.AddEventListener(UIEventType.RELEASE, _ => { if (!Locked()) EditName(); }); }
         nameColor = ProfileFormKit.GetColor(nameText);
-        PegUIElement meta = Plate("ProfileMeta", "Meta", ProfileCatalog.MetaLabel, out _);
+        PegUIElement meta = Plate("ProfileMeta", "Starting era", ProfileCatalog.MetaLabel, out _);
         if (meta == null) meta = Plank("ProfileMeta", null, ProfileCatalog.MetaLabel, _ => { });
         controls[meta] = "save.meta.violet-hold";
         ConfigureMeta(meta);
@@ -1066,7 +1077,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
         NativeProfileSelector.Create(saveName, options);
     }
 
-    // Hover-only: the one available meta is shown as a value; the tooltip says the others are not done yet.
+    // The starting era is a read-only campaign value.
     private void ConfigureMeta(PegUIElement meta)
     {
         selectedControls.Add(meta);
@@ -1079,7 +1090,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
         meta.AddEventListener(UIEventType.ROLLOVER, _ => {
             traceHover = tooltipTraceCount++ < 4;
             if (traceHover) NativeProfileSelector.TraceTooltip("enter", meta, tooltip);
-            tooltip.ShowBoxTooltip("Meta", ProfileCatalog.BacklogTooltip);
+            tooltip.ShowBoxTooltip("Starting era", ProfileCatalog.StartingEraTooltip);
             // Match GameMenuSignUpButton's post-show remap without a compile-time GameLayer dependency.
             tooltipLayer.SetValue(tooltip, Enum.ToObject(tooltipLayer.PropertyType, meta.gameObject.layer), null);
             // Native social menu tooltips sit beside their row, not inside its rendered face.
@@ -1729,7 +1740,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
 
     internal void ShowLoading()
     {
-        loading = true; Header("Loading save…");
+        loading = true; Header("Loading profile…");
         foreach (var row in rows) row.SetEnabled(false);
         foreach (var control in controls.Keys) if (control != null) control.SetEnabled(false);
     }

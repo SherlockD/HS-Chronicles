@@ -237,6 +237,8 @@ public sealed class LocalClassXp
 
 public sealed class LocalProfileData
 {
+    public string CurrentEraId;
+    public bool ShouldSerializeCurrentEraId() => CurrentEraId != null;
     public ArenaRun ArenaRun;
     public bool ShouldSerializeArenaRun() => ArenaRun != null;
     public List<ArenaReceipt> ArenaReceipts = new List<ArenaReceipt>();
@@ -484,6 +486,7 @@ public sealed partial class LocalProfile : IDisposable
     // Match-derived XP always reads the receipt, including replay and history reconciliation.
     internal static int MatchClassXp(LocalMatchRecord match) => GrindTiers.Find(match.GrindTier).ClassXp(LocalCoreProgression.Xp(match.Result, match.Conceded));
 
+    public string CurrentEraId => ProfileCatalog.ResolveEra(data.CurrentEraId);
     public GrindTier GrindTier => GrindTiers.Find(data.GrindTier);
     // The file this instance holds the lock on: what "the open save" means to the catalog (ProfileCatalog.IsOpenSave).
     internal string FilePath => path;
@@ -1927,7 +1930,7 @@ public sealed partial class LocalProfile : IDisposable
         } };
 
     private LocalProfileData Snapshot() => new LocalProfileData {
-        Version = CurrentVersion, GrindTier = data.GrindTier, NpcDifficulty = data.NpcDifficulty,
+        Version = CurrentVersion, CurrentEraId = data.CurrentEraId, GrindTier = data.GrindTier, NpcDifficulty = data.NpcDifficulty,
         ArenaRun = data.ArenaRun?.Copy(),
         ArenaReceipts = data.ArenaReceipts.Select(row => row.Copy()).ToList(),
         ArenaEntryRequestIds = data.ArenaEntryRequestIds.ToList(),

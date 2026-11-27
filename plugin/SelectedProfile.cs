@@ -9,12 +9,11 @@ internal static class SelectedProfile
         catch { profile.Dispose(); throw; }
     }
 
-    // requireExisting: an auto-opened save must already be on disk. A missing file is a failure (the picker takes over), never a
-    // new save with the welcome gift.
+    // A selected profile must already exist. Only fixed-profile startup can initialize a missing profile.
     internal static LocalProfile OpenStartup(OfflineLaunchContext launch, string profilePath, bool requireExisting = false)
     {
         OfflineGuard.ValidateProfileFiles(profilePath);
-        if (requireExisting && !System.IO.File.Exists(profilePath)) throw new System.IO.FileNotFoundException("Save file is missing; nothing was created.");
+        if (requireExisting && !System.IO.File.Exists(profilePath)) throw new System.IO.FileNotFoundException("The profile file is missing.");
 #if STANDARD_PROOF
         if (launch.SnapshotId != OfflineGuard.StandardSnapshot) throw new InvalidOperationException("Snapshot binding missing");
         LocalProfile profile = LocalProfile.OpenSnapshot(profilePath);

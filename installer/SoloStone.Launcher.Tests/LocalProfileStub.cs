@@ -17,6 +17,7 @@ internal sealed class LocalProfile : IDisposable
 internal sealed class LocalLadderState { public int StarIndex; }
 internal sealed class LocalProfileData
 {
+    public string CurrentEraId { get; set; }
     public object Pending; public LocalLadderState LadderState; public int GoldBalance, Version;
     public System.Collections.Generic.List<object> CustomDecks = new System.Collections.Generic.List<object>();
 }

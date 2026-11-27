@@ -32,7 +32,7 @@ static partial class ProfileMenuRuntimeHarness
         internal static readonly List<string> TracePhases = new();
         internal static void TraceTooltip(string phase, PegUIElement row, TooltipZone zone) => TracePhases.Add(phase);
     }
-    private static class ProfileCatalog { internal const string BacklogTooltip = "Not done yet! In the backlog"; }
+    private static class ProfileCatalog { internal const string StartingEraTooltip = "The campaign sets the starting era."; }
     private sealed class TooltipZone
     {
         internal GameObject Clone;
@@ -173,7 +173,7 @@ static partial class ProfileMenuRuntimeHarness
         internal void Close() => Hide();
         internal bool Shown => IsShown();
         internal bool Consistent => rows.Count == CachedCount && owned.Count == rows.Count && slices.Count == rows.Count
-            && controls.Count == rows.Count && selectedControls.Count == rows.Count && heading == (wizard ? "Create save" : "Choose save");
+            && controls.Count == rows.Count && selectedControls.Count == rows.Count && heading == (wizard ? "Create profile" : "Choose profile");
         internal void CheckEditing(Action<bool, string> check)
         {
             editing = true; Rebuild(true, 4);
@@ -194,8 +194,8 @@ static partial class ProfileMenuRuntimeHarness
             foreach (int layer in new[] { 5, 27 }) {
                 meta.gameObject.layer = layer;
                 check(meta.Trigger(UIEventType.ROLLOVER) && meta.Tooltip.Clone != null
-                    && meta.Tooltip.Clone.layer == layer && meta.Tooltip.Headline == "Meta"
-                    && meta.Tooltip.Body == ProfileCatalog.BacklogTooltip,
+                    && meta.Tooltip.Clone.layer == layer && meta.Tooltip.Headline == "Starting era"
+                    && meta.Tooltip.Body == ProfileCatalog.StartingEraTooltip,
                     "production hover renders each new tooltip on its current native menu layer");
                 var tipRect = meta.Tooltip.Clone.Rect;
                 check(tipRect.X >= meta.gameObject.Rect.X + meta.gameObject.Rect.Width && tipRect.Y == meta.gameObject.Rect.Y

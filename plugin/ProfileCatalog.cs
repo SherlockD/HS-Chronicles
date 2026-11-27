@@ -58,7 +58,7 @@ internal sealed class StartupChoice
     internal readonly System.Collections.Generic.List<string> LogLines = new System.Collections.Generic.List<string>();
     internal bool IsAuto => Mode == Auto;
     // Dialog header for the notice: a failure says so, an unfinished last start just asks the player to choose.
-    internal string NoticeHeader => Reason == ProfileCatalog.StartupReasons.UncleanExit ? "CHOOSE A SAVE" : "SAVE UNAVAILABLE";
+    internal string NoticeHeader => Reason == ProfileCatalog.StartupReasons.UncleanExit ? "CHOOSE A PROFILE" : "PROFILE UNAVAILABLE";
     // The real open threw after the checks passed: the picker takes over and the failure is kept for the log and test control.
     internal string FailOpen(Exception error)
     {
@@ -102,8 +102,8 @@ public static class ProfileCatalog
     public const int MaximumSlots = 20, UnlimitedGold = 999999;
     public const long UnlimitedDust = 999999;
     public const string MetaId = "violet-hold", MetaLabel = "Violet Hold — September 2026";
-    public const string BacklogTooltip = "Not done yet! In the backlog";
-    internal const string LegacyId = "legacy";
+    internal const string StartingEraTooltip = "The campaign sets the starting era.";
+    internal const string LegacyId = "legacy", PickerRelaunchTarget = "picker";
     private const string DeletedFolder = ".deleted";
     internal const int KeptDeleted = 5;
     private const string DeletedStamp = "yyyyMMddTHHmmssfff'Z'";
@@ -120,13 +120,35 @@ public static class ProfileCatalog
         legacy = CanonicalLegacy(legacy);
         return Load(legacy).Slots.Select(row => { var copy = Copy(row); copy.Unavailable = SlotProblem(legacy, row); return copy; }).ToArray();
     }
+    internal static string ResolveEra(string id) => string.IsNullOrWhiteSpace(id) ? MetaId : id;
+
+    internal static string EraName(string id) => id == MetaId ? "Violet Hold" : id;
+
+    // The optional era is the first element in a profile. Older profiles use the original meta.
+    internal static string ReadCurrentEraId(string profilePath)
+    {
+        OfflineGuard.ValidateProfileFiles(profilePath);
+        using (var reader = XmlReader.Create(profilePath, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 64 * 1024 * 1024
+        }))
+        {
+            if (reader.MoveToContent() != XmlNodeType.Element || reader.LocalName != nameof(LocalProfileData))
+                throw new InvalidDataException("Profile file has an invalid root.");
+            if (!reader.IsEmptyElement && reader.Read() && reader.MoveToContent() == XmlNodeType.Element
+                && reader.Depth == 1 && reader.LocalName == nameof(LocalProfileData.CurrentEraId))
+                return ResolveEra(reader.ReadElementContentAsString());
+        }
+        return MetaId;
+    }
+
     public static string SelectedId(string legacy) => Load(legacy).SelectedId;
 
     public static string ProfilePathForId(string legacy, string id)
     {
         legacy = CanonicalLegacy(legacy);
         var slot = Load(legacy).Slots.SingleOrDefault(row => row.Id == id)
-            ?? throw new InvalidOperationException("Unknown save selection.");
+            ?? throw new InvalidOperationException("Unknown profile selection.");
         string path = SlotProfile(legacy, slot.Id);
         RequireSlot(path, slot.Name, slot.Id != LegacyId);
         return path;
@@ -139,7 +161,7 @@ public static class ProfileCatalog
         {
             var catalog = LoadUnlocked(legacy);
             var slot = catalog.Slots.SingleOrDefault(row => row.Id == id)
-                ?? throw new InvalidOperationException("Unknown save selection.");
+                ?? throw new InvalidOperationException("Unknown profile selection.");
             RequireSlot(SlotProfile(legacy, slot.Id), slot.Name, slot.Id != LegacyId);
             catalog.SelectedId = slot.Id;
             Commit(legacy, catalog);
@@ -184,8 +206,8 @@ public static class ProfileCatalog
         using (Lease(legacy))
         {
             var catalog = LoadUnlocked(legacy);
-            if (catalog.Slots.Count >= MaximumSlots) throw new InvalidOperationException("Maximum 20 saves reached.");
-            if (catalog.Slots.Any(row => string.Equals(row.Name, name, StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("A save with that name already exists.");
+            if (catalog.Slots.Count >= MaximumSlots) throw new InvalidOperationException("Maximum 20 profiles reached.");
+            if (catalog.Slots.Any(row => string.Equals(row.Name, name, StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("A profile with that name already exists.");
             string id = Guid.NewGuid().ToString("N"), profiles = ProfilesRoot(legacy);
             string staging = Path.Combine(profiles, ".creating-" + id), final = SlotRoot(legacy, id);
             OfflineGuard.RejectReparsePoints(profiles); Directory.CreateDirectory(profiles);
@@ -208,7 +230,7 @@ public static class ProfileCatalog
     public static ProfileSummary Describe(string legacy, string id)
     {
         legacy = CanonicalLegacy(legacy);
-        var slot = Load(legacy).Slots.SingleOrDefault(row => row.Id == id) ?? throw new InvalidOperationException("Unknown save selection.");
+        var slot = Load(legacy).Slots.SingleOrDefault(row => row.Id == id) ?? throw new InvalidOperationException("Unknown profile selection.");
         return Summarize(legacy, slot);
     }
 
@@ -474,16 +496,16 @@ public static class ProfileCatalog
         return text.Length > 160 ? text.Substring(0, 160) : text;
     }
 
-    // ---- Startup save: open the last-opened save on launch ------------------------------------------------------------
+    // ---- Startup profile selection -----------------------------------------------------------------------------------
     // "Last opened" is SelectedId in profiles.xml, the one record the picker, Change Profile and tooling already share. It is
     // committed only after a save has fully opened (ClientBridge.BindStartupPath) and lives outside every save file. Decide
     // reads only (apart from the unfinished-start marker): it never opens a LocalProfile, takes a lease on a save, or writes,
     // repairs, migrates or purges a save. It never throws: every failure is a Picker choice with a reason, so the player always
     // lands on the picker or in a save. The real open that follows is the picked-save path and does what opening by hand does.
-    // A catalog that cannot be read is not handled here (ResolveActiveProfile fails closed first, as it always did).
+    // ResolveLaunch checks catalog readability before allowing the picker to open.
     internal static class StartupReasons
     {
-        internal const string LastOpened = "last-opened", RequestedSave = "requested-save", RequestedPicker = "requested-picker",
+        internal const string ChooseProfile = "choose-profile", RequestedSave = "requested-save", RequestedPicker = "requested-picker",
             RequestInvalid = "request-invalid", NoSaves = "no-saves", NoCatalog = "no-catalog", NoneRecorded = "none-recorded",
             UncleanExit = "unclean-exit", UnknownSave = "unknown-save", SaveMissing = "save-missing", OptionsMissing = "options-missing",
             OptionsUnreadable = "options-unreadable", LinksRejected = "links-rejected", SaveUnreadable = "save-unreadable",
@@ -496,7 +518,7 @@ public static class ProfileCatalog
     // there promises no more than that.
     internal static class StartupNotice
     {
-        internal const string RelaunchUnavailable = "The save you chose could not be opened: it changed or was damaged after you picked it. Nothing was opened, so nothing was changed. Choose a save to continue.";
+        internal const string RelaunchUnavailable = "The selected profile could not be opened. It changed or was damaged after you picked it. Choose a profile to continue.";
         internal static string Plain(string reason)
         {
             switch (reason)
@@ -510,13 +532,13 @@ public static class ProfileCatalog
                 default: return "it could not be checked.";
             }
         }
-        internal static string NotOpened(string name, string reason) => "SoloStone did not open your last save" + (name == null ? "" : ", " + name)
-            + ": " + Plain(reason) + " It was only checked, not opened, so nothing was changed. Choose a save to continue; details are in the game log.";
-        internal static string OpenFailed(string name) => (name ?? "Your last save") + " could not finish opening. Opening a save can run recovery or an upgrade before it fails, "
+        internal static string NotOpened(string name, string reason) => "SoloStone could not open the requested profile" + (name == null ? "" : ", " + name)
+            + ": " + Plain(reason) + " It was only checked, not opened, so nothing was changed. Choose a profile to continue. Details are in the game log.";
+        internal static string OpenFailed(string name) => (name ?? "The requested profile") + " could not finish opening. Opening a profile can run recovery or an upgrade before it fails, "
             + "so it may have changed, exactly as if you had opened it yourself. Retry or choose another; details are in the game log.";
-        internal static string Unclean(string name) => "SoloStone closed before the main menu finished loading last time, so it is not opening "
-            + (name == null ? "your last save" : name) + " automatically. Choose a save to continue.";
-        internal static string Dropped(string name) => (name == null ? "Your last save" : name) + " is no longer in the saves folder, so it was taken off the list. Nothing else was changed. Choose a save to continue.";
+        internal static string Unclean(string name) => "SoloStone closed before the main menu finished loading last time while opening "
+            + (name == null ? "your last profile" : name) + ". Choose a profile to continue.";
+        internal static string Dropped(string name) => (name == null ? "Your last profile" : name) + " is no longer in the profiles folder, so it was taken off the list. Nothing else was changed. Choose a profile to continue.";
     }
 
     internal static class Startup
@@ -636,7 +658,7 @@ public static class ProfileCatalog
                 ProfileSlot slot;
                 if (requested != null)
                 {
-                    // A tool asked for this save: same checks as the recorded one, but neither the record nor a leftover marker applies.
+                    // A tool requested an explicit profile. Only this route opens a profile before player selection.
                     slot = catalog.Slots.SingleOrDefault(row => row.Id == requested);
                     if (slot == null) return Picker(StartupReasons.UnknownSave, reportRequest, null, null);
                 }
@@ -654,6 +676,7 @@ public static class ProfileCatalog
                         var unfinished = catalog.Slots.SingleOrDefault(row => row.Id == marker.SlotId) ?? slot;
                         return Picker(StartupReasons.UncleanExit, null, unfinished, StartupNotice.Unclean(unfinished.Name));
                     }
+                    return Picker(StartupReasons.ChooseProfile, null, slot, null);
                 }
                 if (runId != null) { Arm(legacy, slot.Id, runId); armed = true; }
                 FaultHook?.Invoke("startup-checks:" + slot.Id);   // test seam: the marker must already be down here
@@ -662,7 +685,7 @@ public static class ProfileCatalog
                 string path = SlotProfile(legacy, slot.Id);
                 string unreadable = Preflight(path);
                 if (unreadable != null) return Done(Picker(unreadable, reportRequest, slot, StartupNotice.NotOpened(slot.Name, unreadable)));
-                return new StartupChoice { Mode = StartupChoice.Auto, Reason = requested != null ? StartupReasons.RequestedSave : StartupReasons.LastOpened,
+                return new StartupChoice { Mode = StartupChoice.Auto, Reason = StartupReasons.RequestedSave,
                     Request = reportRequest, TargetId = slot.Id, TargetPath = path, TargetName = slot.Name };
             }
             catch (Exception error)
@@ -673,41 +696,46 @@ public static class ProfileCatalog
             }
         }
 
-        // Everything OfflineGuard.ResolveLaunch does for a picker-capable launch, separable from the platform check so it runs on any
-        // host: consume the tool request; an explicit Change Profile relaunch binds its target (and if that target is no longer
-        // usable, the picker with a notice, never the previously recorded save); otherwise finish what a crashed delete/create left
-        // (the picker's Reconcile, now while nothing is bound), then choose between auto-open and the picker. Throws only for the
-        // conditions it always threw for: an unreadable catalog, malformed relaunch selectors.
+        // Reconcile while no profile is bound, then show the picker. Explicit tool requests can open a profile directly.
+        // An unreadable catalog or malformed relaunch credentials still fail before the picker opens.
         internal static StartupLaunch ResolveLaunch(string rootProfile, string run, string relaunchPrevious, string relaunchToken)
         {
             string request = ConsumeRequest(rootProfile);
             var result = new StartupLaunch { Profile = rootProfile, Selector = true };
             if (TryResolveRelaunch(rootProfile, run, relaunchPrevious, relaunchToken, out string target, out string targetPath))
             {
-                result.Profile = targetPath; result.RelaunchTarget = target; result.Selector = false;
-                return result;
+                if (target != PickerRelaunchTarget)
+                {
+                    result.Profile = targetPath; result.RelaunchTarget = target; result.Selector = false;
+                    return result;
+                }
+                request = PickerRelaunchTarget;
             }
-            string droppedName = null, droppedId = null;
-            var lines = new System.Collections.Generic.List<string>();
+            var lines = new List<string>();
+            ProfileSlot dropped = null;
             try
             {
-                var before = Load(CanonicalLegacy(rootProfile));
+                var before = Load(rootProfile);
                 Reconcile(rootProfile, lines.Add);
-                var after = Load(CanonicalLegacy(rootProfile));
-                if (before.SelectedId != null && after.SelectedId == null) { droppedId = before.SelectedId; droppedName = before.Slots.SingleOrDefault(row => row.Id == droppedId)?.Name; }
+                var after = Load(rootProfile);
+                if (before.SelectedId != null && after.SelectedId == null)
+                    dropped = before.Slots.SingleOrDefault(row => row.Id == before.SelectedId);
             }
-            catch (Exception error) { lines.Add("PROFILE_RECONCILE failed=" + Reason(error)); }
-            result.Profile = ResolveActiveProfile(rootProfile);
+            catch (Exception error)
+            {
+                lines.Add("PROFILE_RECONCILE failed=" + Reason(error));
+                Load(rootProfile); // Retry the catalog read before letting the picker open.
+            }
             StartupChoice choice;
-            if (relaunchPrevious != null || relaunchToken != null)
+            if (target != PickerRelaunchTarget && (relaunchPrevious != null || relaunchToken != null))
                 choice = Picker(StartupReasons.RelaunchUnavailable, null, null, StartupNotice.RelaunchUnavailable);
             else
             {
                 choice = Decide(rootProfile, request, ReadMarker(rootProfile), run);
-                if (!choice.IsAuto && (choice.Reason == StartupReasons.NoneRecorded || choice.Reason == StartupReasons.NoSaves) && droppedId != null)
+                if (!choice.IsAuto && (choice.Reason == StartupReasons.NoneRecorded || choice.Reason == StartupReasons.NoSaves) && dropped != null)
                 {
-                    choice.Reason = StartupReasons.SaveMissing; choice.TargetId = droppedId; choice.TargetName = droppedName;
-                    choice.Notice = StartupNotice.Dropped(droppedName);
+                    choice.Reason = StartupReasons.SaveMissing; choice.TargetId = dropped.Id; choice.TargetName = dropped.Name;
+                    choice.Notice = StartupNotice.Dropped(dropped.Name);
                 }
             }
             choice.Reconciled = true; choice.LogLines.AddRange(lines);
@@ -749,30 +777,43 @@ public static class ProfileCatalog
         if (!Guid.TryParseExact(runId, "D", out _)) throw new InvalidOperationException("Invalid launch ID.");
         using (Lease(legacy))
         {
-            var slot = LoadUnlocked(legacy).Slots.SingleOrDefault(row => row.Id == targetId) ?? throw new InvalidOperationException("Unknown save selection.");
-            RequireSlot(SlotProfile(legacy, slot.Id), slot.Name, slot.Id != LegacyId);
+            if (targetId != PickerRelaunchTarget)
+            {
+                var slot = LoadUnlocked(legacy).Slots.SingleOrDefault(row => row.Id == targetId)
+                    ?? throw new InvalidOperationException("Unknown profile selection.");
+                RequireSlot(SlotProfile(legacy, slot.Id), slot.Name, slot.Id != LegacyId);
+            }
             string token = Guid.NewGuid().ToString("N");
             WriteAtomic(SwitchXml, SwitchPath(legacy), new ProfileSwitchRequest { Version = 1, RunId = runId, Token = token, TargetId = targetId }, false);
             return token;
         }
     }
 
-    // Only an immediate launcher successor carrying both one-shot values may bypass the ordinary startup picker.
-    // This validates metadata only. The selected marker is committed after ClientBridge opens the target ledger.
+    // A verified launcher successor may open the picker or bind a specific profile for existing tooling.
+    // Picker requests are consumed here. A profile target is committed only after ClientBridge opens it.
     public static bool TryResolveRelaunch(string legacy, string newRunId, string previousRunId, string token,
         out string targetId, out string targetPath)
     {
         targetId = targetPath = null;
         legacy = CanonicalLegacy(legacy);
         if (previousRunId == null && token == null) return false;
-        var request = ReadSwitch(legacy, newRunId, previousRunId, token);
-        var slot = Load(legacy).Slots.SingleOrDefault(row => row.Id == request.TargetId)
-            ?? throw new InvalidOperationException("Relaunch target is not in save catalog.");
-        // A target damaged after the old process validated it falls back to the ordinary picker.
-        if (SlotProblem(legacy, slot) != null) return false;
-        targetId = slot.Id;
-        targetPath = SlotProfile(legacy, slot.Id);
-        return true;
+        using (Lease(legacy))
+        {
+            var request = ReadSwitch(legacy, newRunId, previousRunId, token);
+            if (request.TargetId == PickerRelaunchTarget)
+            {
+                File.Delete(SwitchPath(legacy));
+                targetId = PickerRelaunchTarget;
+                return true;
+            }
+
+            var slot = LoadUnlocked(legacy).Slots.SingleOrDefault(row => row.Id == request.TargetId)
+                ?? throw new InvalidOperationException("Relaunch target is not in the profile catalog.");
+            if (SlotProblem(legacy, slot) != null) return false;
+            targetId = slot.Id;
+            targetPath = SlotProfile(legacy, slot.Id);
+            return true;
+        }
     }
 
     public static void CompleteRelaunch(string legacy, string newRunId, string previousRunId, string token, string targetId)
@@ -905,7 +946,7 @@ public static class ProfileCatalog
         }
     }
     private static void WriteNew(XmlSerializer serializer, string path, object value) { using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { serializer.Serialize(stream, value); stream.Flush(true); } }
-    private static ProfileOptions ReadOptions(string path) { OfflineGuard.RejectReparsePoints(path); if (!File.Exists(path)) throw new InvalidOperationException("Save options are missing."); var value = Read<ProfileOptions>(OptionsXml, path, 8192); ValidateOptions(value); return value; }
+    private static ProfileOptions ReadOptions(string path) { OfflineGuard.RejectReparsePoints(path); if (!File.Exists(path)) throw new InvalidOperationException("Profile options are missing."); var value = Read<ProfileOptions>(OptionsXml, path, 8192); ValidateOptions(value); return value; }
     private static T Read<T>(XmlSerializer serializer, string path, long maximum)
     {
         if (new FileInfo(path).Length > maximum) throw new InvalidOperationException("Save metadata is too large.");
@@ -920,8 +961,8 @@ public static class ProfileCatalog
         || value.GrindTier != null && !GrindTiers.IsKnown(value.GrindTier)
         || value.NpcDifficulty != null && !NpcDifficultyIds.IsSelectable(value.NpcDifficulty)
         || double.IsNaN(value.LegendRating) || double.IsInfinity(value.LegendRating)
-        || (value.StartLegendOne ? value.LegendRating <= 0 : value.LegendRating != 0)) throw new InvalidOperationException("Unsupported save options."); }
-    private static void RequireSlot(string path, string name, bool options) { OfflineGuard.ValidateProfileFiles(path); if (!File.Exists(path)) throw new InvalidOperationException("Save file is missing: " + name); if (options) ReadOptions(Path.Combine(Path.GetDirectoryName(path), "profile-options.xml")); }
+        || (value.StartLegendOne ? value.LegendRating <= 0 : value.LegendRating != 0)) throw new InvalidOperationException("Unsupported profile options."); }
+    private static void RequireSlot(string path, string name, bool options) { OfflineGuard.ValidateProfileFiles(path); if (!File.Exists(path)) throw new InvalidOperationException("Profile file is missing: " + name); if (options) ReadOptions(Path.Combine(Path.GetDirectoryName(path), "profile-options.xml")); }
     // Every catalog read and write comes through here, and the lock file alone changes the save tree.
     private static FileStream Lease(string legacy) { SaveHold.Require("the save catalog"); string path = CatalogPath(legacy) + ".lock"; OfflineGuard.RejectReparsePoints(path); Directory.CreateDirectory(Path.GetDirectoryName(path)); return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
     private static string CanonicalLegacy(string path) { path = Path.GetFullPath(path ?? throw new ArgumentNullException(nameof(path))); if (!string.Equals(Path.GetFileName(path), "profile.xml", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Save catalog root must be profile.xml."); OfflineGuard.ValidateProfileFiles(path); return path; }
@@ -930,7 +971,7 @@ public static class ProfileCatalog
     private static string SlotRoot(string legacy, string id) => Path.Combine(ProfilesRoot(legacy), id);
     private static string SlotOptions(string legacy, string id) => Path.Combine(SlotRoot(legacy, id), "profile-options.xml");
     private static string SlotProfile(string legacy, string id) { if (id == LegacyId) return legacy; if (!ValidId(id)) throw new InvalidOperationException("Invalid save ID."); string root = Path.GetFullPath(ProfilesRoot(legacy)) + Path.DirectorySeparatorChar, path = Path.GetFullPath(Path.Combine(root, id, "profile.xml")); if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Save path escaped its root."); return path; }
-    private static string ValidateName(string name) { string value = name?.Trim(); if (string.IsNullOrEmpty(value) || value.Length > 32 || value.Any(c => char.IsControl(c) || c == '<' || c == '>')) throw new InvalidOperationException("Save name must be 1–32 plain characters."); return value; }
+    private static string ValidateName(string name) { string value = name?.Trim(); if (string.IsNullOrEmpty(value) || value.Length > 32 || value.Any(c => char.IsControl(c) || c == '<' || c == '>')) throw new InvalidOperationException("Profile name must be 1–32 plain characters."); return value; }
     private static bool ValidId(string id) => id == LegacyId || id != null && id.Length == 32 && id.All(c => c >= '0' && c <= '9' || c >= 'a' && c <= 'f');
     private static bool Same(string a, string b) => string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
     private static ProfileSlot Copy(ProfileSlot value) => new ProfileSlot { Id = value.Id, Name = value.Name, CreatedUtc = value.CreatedUtc };

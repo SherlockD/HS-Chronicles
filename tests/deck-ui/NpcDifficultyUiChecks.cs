@@ -24,8 +24,8 @@ internal static class NpcDifficultyUiChecks
             check(DifficultyReadHarness.ReadDifficulty(path) == "hard", "old save defaults Hard; match-history difficulty cannot override it");
             File.WriteAllText(path, "<LocalProfileData><NpcDifficulty>medium</NpcDifficulty><History>unread tail");
             check(DifficultyReadHarness.ReadDifficulty(path) == "medium", "picker reads only header field, without deserializing history");
-            File.WriteAllText(path, "<LocalProfileData><GrindTier>standard</GrindTier><NpcDifficulty>easy</NpcDifficulty><Version>15</Version></LocalProfileData>");
-            check(DifficultyReadHarness.ReadDifficulty(path) == "easy", "picker reads the difficulty after the optional pace element");
+            File.WriteAllText(path, "<LocalProfileData><CurrentEraId>violet-hold</CurrentEraId><GrindTier>standard</GrindTier><NpcDifficulty>easy</NpcDifficulty><Version>17</Version></LocalProfileData>");
+            check(DifficultyReadHarness.ReadDifficulty(path) == "easy", "picker reads difficulty after the era and pace elements");
             // An old save (Version first) is Hard without reading further: a later NpcDifficulty (a match's, or unread tail) is never reached.
             File.WriteAllText(path, "<LocalProfileData><GrindTier>standard</GrindTier><Version>15</Version><NpcDifficulty>easy</NpcDifficulty><History>unread tail");
             check(DifficultyReadHarness.ReadDifficulty(path) == "hard", "an old save stops at its first other root element, never read to the end");

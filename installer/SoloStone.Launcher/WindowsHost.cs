@@ -153,7 +153,7 @@ namespace SoloStone
                     engine.ReportHealth(HealthOutcome.Confirmed,null);
                     engine.ClearNote();
                     bool unused;
-                    if(previous!=null && !WaitMarker(client,Path.Combine(reports,"save-bound.txt"),
+                    if(previous!=null && target!=Relaunch.PickerTarget && !WaitMarker(client,Path.Combine(reports,"save-bound.txt"),
                         lines=>lines.Contains("schema=1") && lines.Contains("runId="+run) && lines.Contains("slotId="+target)
                             && lines.Any(line=>Safety.Same(line,"profilePath="+(target=="legacy" ? Path.Combine(SaveRoot,"profile.xml")
                                 : Path.Combine(SaveRoot,"profiles",target,"profile.xml")))),Health.FirstStartSeconds,out unused)) {
@@ -162,9 +162,8 @@ namespace SoloStone
                     }
                     progress("SoloStone is running. Quit from the game to close this launcher.");
                     client.WaitForExit();
-                    // 46 = Health.ExitSaveSwitch: the game quits with this code when the player picks another save in its save selector
-                    // (NativeProfileSelector). The launcher reads the switch request and starts the game again for that save instead of treating
-                    // the exit as a failure.
+                    // 46 requests a restart at the profile picker or at a specific profile for tooling.
+                    // The single-use token authorizes passing this intent to the next client process.
                     if(client.ExitCode==46) {
                         string request=Path.Combine(SaveRoot,"profile-switch.xml");
                         token=Relaunch.Read(request,run,started,out target);

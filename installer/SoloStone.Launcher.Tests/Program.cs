@@ -153,6 +153,8 @@ static partial class Program
             string switchFile=Path.Combine(temp,"profile-switch.xml"), run=Guid.NewGuid().ToString("D"), token=Guid.NewGuid().ToString("N");
             File.WriteAllText(switchFile,"<ProfileSwitchRequest><Version>1</Version><RunId>"+run+"</RunId><Token>"+token+"</Token><TargetId>legacy</TargetId></ProfileSwitchRequest>");
             Check(Relaunch.Read(switchFile,run,DateTime.UtcNow)==token,"exit 46 token");
+            File.WriteAllText(switchFile,File.ReadAllText(switchFile).Replace(">legacy<",">picker<"));
+            Check(Relaunch.Read(switchFile,run,DateTime.UtcNow,out string switchTarget)==token && switchTarget==Relaunch.PickerTarget,"exit 46 picker target");
             Refuses(()=>Relaunch.Read(switchFile,Guid.NewGuid().ToString("D"),DateTime.UtcNow),"foreign run token");
             File.SetLastWriteTimeUtc(switchFile,DateTime.UtcNow.AddMinutes(-10));
             Refuses(()=>Relaunch.Read(switchFile,run,DateTime.UtcNow),"stale switch request");
