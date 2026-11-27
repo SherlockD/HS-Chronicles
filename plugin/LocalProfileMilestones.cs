@@ -24,7 +24,7 @@ public sealed partial class LocalProfile
         var lookup = NpcLegendNumber;
         if (lookup == null || match.Result == "Abandoned" || match.Ladder.StarsAfter < LadderRules.LegendIndex || !match.Ladder.RatingAfter.HasValue) return null;
         try {
-            int? number = lookup(match.Ladder.RatingAfter.Value, RankedMatches(next).Count + 1);
+            int? number = lookup(match.Ladder.RatingAfter.Value, CurrentEraRankedMatches(next).Count() + 1);
             return number.HasValue && number.Value >= 1 ? number : null;
         } catch (Exception) { return null; }
     }

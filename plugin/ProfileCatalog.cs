@@ -5,6 +5,9 @@ using System.IO;
 using System.Linq;
 using System.Xml;
 using System.Xml.Serialization;
+#if !SOLOSTONE_PREBUILT_ENGINE
+using SabberStoneCore.Campaigns;
+#endif
 
 public sealed class ProfileSlot {
     public string Id; public string Name; public string CreatedUtc;
@@ -122,7 +125,15 @@ public static class ProfileCatalog
     }
     internal static string ResolveEra(string id) => string.IsNullOrWhiteSpace(id) ? MetaId : id;
 
-    internal static string EraName(string id) => id == MetaId ? "Violet Hold" : id;
+    internal static string EraName(string id)
+    {
+        if (id == MetaId) return "Violet Hold";
+#if !SOLOSTONE_PREBUILT_ENGINE
+        return CampaignEraCatalog.Installed.Find(id)?.Title ?? id;
+#else
+        return id;
+#endif
+    }
 
     // The optional era is the first element in a profile. Older profiles use the original meta.
     internal static string ReadCurrentEraId(string profilePath)

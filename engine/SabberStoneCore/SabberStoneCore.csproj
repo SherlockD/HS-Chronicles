@@ -45,6 +45,7 @@
     <NoWarn>1701;1702;0008;0049;</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="resources\Data\CampaignEras.xml" LogicalName="SabberStoneCore.Resources.CampaignEras.xml" />
     <EmbeddedResource Include="resources\Data\OfflinePoolCatalog.xml" LogicalName="SabberStoneCore.Resources.OfflinePoolCatalog.xml" />
     <EmbeddedResource Include="resources\Data\LegacyGenerationV1.xml" LogicalName="SabberStoneCore.Resources.LegacyGenerationV1.xml" />
     <!-- CardDefs.xml and ClientOverlay.xml stay private inputs of tools/gen_card_facts.py; never embed them. -->

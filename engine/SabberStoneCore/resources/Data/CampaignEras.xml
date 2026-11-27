@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CampaignEras schemaVersion="1">
+  <Era id="classic-2014" title="Классика 2014" month="2014-06" />
+  <Era id="curse-of-naxxramas" title="Проклятие Наксрамаса" month="2014-07" />
+  <Era id="goblins-vs-gnomes" title="Goblins vs Gnomes" month="2014-12" />
+  <Era id="blackrock-mountain" title="Blackrock Mountain" month="2015-04" />
+  <Era id="the-grand-tournament" title="The Grand Tournament" month="2015-08" />
+  <Era id="the-league-of-explorers" title="The League of Explorers" month="2015-11" />
+  <Era id="whispers-of-the-old-gods" title="Whispers of the Old Gods" month="2016-04" />
+  <Era id="one-night-in-karazhan" title="One Night in Karazhan" month="2016-08" />
+  <Era id="mean-streets-of-gadgetzan" title="Mean Streets of Gadgetzan" month="2016-12" />
+  <Era id="journey-to-ungoro" title="Journey to Un’Goro" month="2017-04" />
+  <Era id="knights-of-the-frozen-throne" title="Knights of the Frozen Throne" month="2017-08" />
+  <Era id="kobolds-and-catacombs" title="Kobolds &amp; Catacombs" month="2017-12" />
+  <Era id="the-witchwood" title="The Witchwood" month="2018-04" />
+  <Era id="the-boomsday-project" title="The Boomsday Project" month="2018-08" />
+  <Era id="rastakhans-rumble" title="Rastakhan’s Rumble" month="2018-12" />
+  <Era id="rise-of-shadows" title="Rise of Shadows" month="2019-04" />
+  <Era id="saviors-of-uldum" title="Saviors of Uldum" month="2019-08" />
+  <Era id="descent-of-dragons" title="Descent of Dragons" month="2019-12" />
+  <Era id="galakronds-awakening" title="Galakrond’s Awakening" month="2020-01" />
+  <Era id="ashes-of-outland" title="Ashes of Outland" month="2020-04" />
+  <Era id="scholomance-academy" title="Scholomance Academy" month="2020-08" />
+  <Era id="madness-at-the-darkmoon-faire" title="Madness at the Darkmoon Faire" month="2020-11" />
+  <Era id="forged-in-the-barrens" title="Forged in the Barrens" month="2021-03" />
+  <Era id="united-in-stormwind" title="United in Stormwind" month="2021-08" />
+  <Era id="fractured-in-alterac-valley" title="Fractured in Alterac Valley" month="2021-12" />
+  <Era id="voyage-to-the-sunken-city" title="Voyage to the Sunken City" month="2022-04" />
+  <Era id="murder-at-castle-nathria" title="Murder at Castle Nathria" month="2022-08" />
+  <Era id="march-of-the-lich-king" title="March of the Lich King" month="2022-12" />
+  <Era id="festival-of-legends" title="Festival of Legends" month="2023-04" />
+  <Era id="titans" title="TITANS" month="2023-08" />
+  <Era id="showdown-in-the-badlands" title="Showdown in the Badlands" month="2023-11" />
+  <Era id="whizbangs-workshop" title="Whizbang’s Workshop" month="2024-03" />
+  <Era id="perils-in-paradise" title="Perils in Paradise" month="2024-07" />
+  <Era id="the-great-dark-beyond" title="The Great Dark Beyond" month="2024-11" />
+  <Era id="into-the-emerald-dream" title="Into the Emerald Dream" month="2025-03" />
+  <Era id="the-lost-city-of-ungoro" title="The Lost City of Un’Goro" month="2025-07" />
+  <Era id="across-the-timeways" title="Across the Timeways" month="2025-11" />
+  <Era id="cataclysm" title="CATACLYSM" month="2026-03" />
+  <Era id="escape-from-violet-hold" title="Escape from Violet Hold" month="2026-07" />
+  <Era id="reign-of-the-black-empire" title="Reign of the Black Empire" month="2026-10" />
+</CampaignEras>

@@ -235,6 +235,13 @@ public sealed class LocalClassXp
     public int Xp;
 }
 
+public sealed class LocalEraTransition
+{
+    public string FromEraId;
+    public string ToEraId;
+    public int RankedMatchCount;
+}
+
 public sealed class LocalProfileData
 {
     public string CurrentEraId;
@@ -253,6 +260,10 @@ public sealed class LocalProfileData
     public string NpcDifficulty;
     public bool ShouldSerializeNpcDifficulty() => NpcDifficulty != null;
     public int Version;
+    public string UnlockedEraId;
+    public bool ShouldSerializeUnlockedEraId() => UnlockedEraId != null;
+    public List<LocalEraTransition> EraTransitions = new List<LocalEraTransition>();
+    public bool ShouldSerializeEraTransitions() => EraTransitions.Count > 0;
     public List<LocalMasteryGrant> MasteryGrants = new List<LocalMasteryGrant>();
     public bool ShouldSerializeMasteryGrants() => MasteryGrants.Count > 0;
     public List<LocalClassRewardGrant> ClassRewardGrants = new List<LocalClassRewardGrant>();
@@ -1931,6 +1942,10 @@ public sealed partial class LocalProfile : IDisposable
 
     private LocalProfileData Snapshot() => new LocalProfileData {
         Version = CurrentVersion, CurrentEraId = data.CurrentEraId, GrindTier = data.GrindTier, NpcDifficulty = data.NpcDifficulty,
+        UnlockedEraId = data.UnlockedEraId,
+        EraTransitions = data.EraTransitions.Select(transition => new LocalEraTransition {
+            FromEraId = transition.FromEraId, ToEraId = transition.ToEraId, RankedMatchCount = transition.RankedMatchCount
+        }).ToList(),
         ArenaRun = data.ArenaRun?.Copy(),
         ArenaReceipts = data.ArenaReceipts.Select(row => row.Copy()).ToList(),
         ArenaEntryRequestIds = data.ArenaEntryRequestIds.ToList(),
@@ -1992,7 +2007,7 @@ public sealed partial class LocalProfile : IDisposable
         return result;
     }
 
-    private void Commit(LocalProfileData next)
+    private void Commit(LocalProfileData next, bool acceptRecoveredReplace = false)
     {
         if (next.Version != CurrentVersion) throw new InvalidOperationException("Only V" + CurrentVersion + " profiles can be committed.");
         foreach (var deck in next.CustomDecks ?? new List<LocalCustomDeck>()) if (deck != null && deck.Format == null) deck.Format = StandardFormat;
@@ -2030,13 +2045,13 @@ public sealed partial class LocalProfile : IDisposable
             {
                 // File.Replace can fail after it has already removed the live profile. If the save is gone but the freshly
                 // written temp file survived, move it into place so the player is never left with no save at all.
+                bool recovered = false;
                 if (!File.Exists(path) && File.Exists(temporary))
                 {
                     preserveTemporary = true;
-                    try { File.Move(temporary, path); } catch { }
+                    try { File.Move(temporary, path); recovered = true; } catch { }
                 }
-                // Recovery may leave next on disk; data stays unchanged because the commit still throws.
-                throw;
+                if (!recovered || !acceptRecoveredReplace) throw;
             }
             data = next;
             LogDeckRepairs(repaired);

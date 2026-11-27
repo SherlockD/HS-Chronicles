@@ -15,6 +15,9 @@
     <DefineConstants>$(DefineConstants);ENGINE_SOURCE</DefineConstants>
     <AssetTargetFallback>$(AssetTargetFallback);netstandard2.1</AssetTargetFallback>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(EngineSource)' != 'true'">
+    <DefineConstants>$(DefineConstants);SOLOSTONE_PREBUILT_ENGINE</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Installer)' == 'true'">
     <DefineConstants>$(DefineConstants);SOLOSTONE_INSTALLER;SOLOSTONE_PLUGIN</DefineConstants>
   </PropertyGroup>

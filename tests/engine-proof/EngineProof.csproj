@@ -10,6 +10,9 @@
   <!-- Two builds of one source (docs/TESTING.md). Default: the CI suite engine-proof, no client file needed.
        -p:ClientTransport=true: the client suite engine-proof-client, which adds the native match and the client's own libraries. -->
   <PropertyGroup Condition="'$(ClientTransport)' == 'true'"><DefineConstants>$(DefineConstants);CLIENT_TRANSPORT;PINNED_CLIENT_ALIAS</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(EngineDll)' != ''">
+    <DefineConstants>$(DefineConstants);SOLOSTONE_PREBUILT_ENGINE</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../plugin/NativeStallClock.cs" Link="NativeStallClock.cs" />
     <Compile Include="../../plugin/NativeHeraldText.cs" Link="NativeHeraldText.cs" />

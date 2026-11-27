@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+#if !SOLOSTONE_PREBUILT_ENGINE
+using SabberStoneCore.Campaigns;
+#endif
 
 public sealed partial class LocalProfile
 {
@@ -9,7 +12,7 @@ public sealed partial class LocalProfile
     // the rest is seeded from settled history; the first settlement persists the seeded state.
     public LadderPosition Ladder => EffectiveLadder(data);
     // Direction of the last ladder move that changed stars, for the native medal's 0/3-vs-3/3 form (LadderRules.Medal).
-    public bool LadderArrivedByWin => data.Matches.Select(match => match.Ladder)
+    public bool LadderArrivedByWin => CurrentEraRankedMatches(data).Select(match => match.Ladder)
         .LastOrDefault(r => r != null && r.LadderRuleVersion >= LadderRules.RuleVersion && r.StarsGained != 0)?.StarsGained > 0;
     public LocalLadderReceipt LadderReceipt(string matchId) => Copy(data.Matches.SingleOrDefault(match => match.Id == matchId)?.Ladder);
 
@@ -29,8 +32,47 @@ public sealed partial class LocalProfile
     // hidden rating, calibration, Legend number or the NPC field's drift epoch.
     internal static List<LocalMatchRecord> RankedMatches(LocalProfileData profile) =>
         profile.Matches.Where(match => ArenaRules.IsRanked(match.Mode)).ToList();
-    internal int RankedMatchCount => data.Matches.Count(match => ArenaRules.IsRanked(match.Mode));
-    public IReadOnlyList<LocalMatchRecord> RankedHistory => RankedMatches(data).Select(Copy).ToArray();
+    private static IEnumerable<LocalMatchRecord> CurrentEraRankedMatches(LocalProfileData profile) =>
+        profile.Matches.Where(match => ArenaRules.IsRanked(match.Mode))
+            .Skip(profile.EraTransitions.LastOrDefault()?.RankedMatchCount ?? 0);
+
+    internal int RankedMatchCount => CurrentEraRankedMatches(data).Count();
+    public IReadOnlyList<LocalMatchRecord> RankedHistory => CurrentEraRankedMatches(data).Select(Copy).ToArray();
+
+#if !SOLOSTONE_PREBUILT_ENGINE
+    internal CampaignEra UnlockedNextEra(CampaignEraCatalog catalog)
+    {
+        if (data.UnlockedEraId == null || catalog.Find(CurrentEraId)?.Content == null)
+            return null;
+        var next = catalog.Next(CurrentEraId);
+        return next?.Content != null && next.Id == data.UnlockedEraId ? next : null;
+    }
+
+    internal bool TryAdvanceEra(CampaignEraCatalog catalog, string fromEraId, string toEraId)
+    {
+        if (CurrentEraId != fromEraId || data.Pending != null || toEraId == null || UnlockedNextEra(catalog)?.Id != toEraId)
+            return false;
+
+        var next = Snapshot();
+        next.EraTransitions.Add(new LocalEraTransition {
+            FromEraId = fromEraId, ToEraId = toEraId, RankedMatchCount = RankedMatches(next).Count
+        });
+        next.CurrentEraId = toEraId;
+        next.UnlockedEraId = null;
+
+        var fresh = LadderRules.Fresh();
+        // Floor grants and the records that back them belong to the profile.
+        next.LadderState.StarIndex = fresh.StarIndex;
+        next.LadderState.BestStarIndex = fresh.BestStarIndex;
+        next.LadderState.Multiplier = fresh.Multiplier;
+        next.LadderState.StreakWins = fresh.StreakWins;
+        next.LadderState.PlacementGames = fresh.PlacementGames;
+        next.LadderState.HiddenRating = fresh.Rating;
+        next.LadderState.LegendReached = fresh.LegendReached;
+        Commit(next, acceptRecoveredReplace: true);
+        return true;
+    }
+#endif
     public IReadOnlyList<LocalMatchRecord> CasualHistory => data.Matches.Where(match => CasualRules.IsCasual(match.Mode)).Select(Copy).ToArray();
     // Hidden Casual matchmaking rating: the stored one, else the seed the first Casual settlement will store.
     public double CasualRating => data.CasualRating ?? CasualRules.Seed(EffectiveLadder(data).Rating);
@@ -129,7 +171,7 @@ public sealed partial class LocalProfile
 
     private static double? PreviousPlacementRating(LocalProfileData profile, LadderPosition before) =>
         before.PlacementGames < LadderRules.PlacementLength
-            ? profile.Matches.LastOrDefault(match => ArenaRules.IsRanked(match.Mode))?.Ladder?.PlacementRatingAfter
+            ? CurrentEraRankedMatches(profile).LastOrDefault()?.Ladder?.PlacementRatingAfter
             : null;
 
     private static LocalPlacementOpponent Copy(LocalPlacementOpponent placement) => placement == null ? null :
@@ -152,6 +194,10 @@ public sealed partial class LocalProfile
         state.LegendReached = after.LegendReached;
         next.LadderState = state;
         next.LadderRuleVersion = LadderRules.RuleVersion;
+#if !SOLOSTONE_PREBUILT_ENGINE
+        if (step.LegendReachedNow && next.CurrentEraId != null && next.CurrentEraId != ProfileCatalog.MetaId)
+            next.UnlockedEraId = CampaignEraCatalog.Installed.Next(next.CurrentEraId)?.Id;
+#endif
         return new LocalLadderReceipt {
             LadderRuleVersion = LadderRules.RuleVersion, Outcome = step.Outcome.ToString(),
             StarsBefore = before.StarIndex, StarsAfter = after.StarIndex, BestBefore = before.BestStarIndex, BestAfter = after.BestStarIndex,
@@ -170,7 +216,7 @@ public sealed partial class LocalProfile
 
     private static bool TryCalibrateLadder(LocalProfileData profile)
     {
-        if (profile.LadderCalibration != null || profile.Pending != null) return false;
+        if (profile.LadderCalibration != null || profile.Pending != null || profile.EraTransitions.Count != 0) return false;
         int legacy = LegacyPrefix(profile);
         if (legacy == 0 || LegacySeed(RankedMatches(profile).Take(legacy)).PlacementGames != LadderRules.PlacementLength) return false;
         var position = LadderOf(profile);
@@ -202,8 +248,10 @@ public sealed partial class LocalProfile
         var matches = RankedMatches(profile);
         var marker = profile.LadderCalibration;
         int legacy = LegacyPrefix(profile);
+        ValidateEraTransitions(profile, legacy, matches.Count);
         var expected = legendRating > 0 && legacy == 0 ? CheatLegendOne(legendRating) : LegacySeed(matches.Take(legacy));
         if (marker != null && (marker.Version != 1 || marker.MatchCount < legacy || marker.MatchCount > matches.Count
+            || profile.EraTransitions.Count != 0 && marker.MatchCount > profile.EraTransitions[0].RankedMatchCount
             || legacy == 0 || expected.PlacementGames != LadderRules.PlacementLength))
             throw new InvalidOperationException("Invalid ladder calibration.");
         // Profile rule version 0 = V10 reservation (receipts, if any, are the folded legacy rule 1).
@@ -219,14 +267,25 @@ public sealed partial class LocalProfile
         if (profile.LadderState == null || profile.LadderState.HiddenRating == null)
             throw new InvalidOperationException("Missing ladder state.");
         var position = LadderOf(profile);
+        if (profile.UnlockedEraId != null && !position.LegendReached)
+            throw new InvalidOperationException("Campaign era unlocked before Legend.");
         if (matches.Count == 0 && marker == null && Same(position, LadderRules.Fresh())) return;
         double? placementRating = null;
+        int nextTransition = 0;
         for (int i = legacy; i <= matches.Count; i++)
         {
             if (marker != null && marker.MatchCount == i) {
                 expected.Rating = LadderRules.StartRating;
                 expected.PlacementGames = 0;
                 placementRating = null;
+            }
+            if (nextTransition < profile.EraTransitions.Count && profile.EraTransitions[nextTransition].RankedMatchCount == i)
+            {
+                if (!expected.LegendReached)
+                    throw new InvalidOperationException("Campaign era transition precedes Legend.");
+                expected = LadderRules.Fresh();
+                placementRating = null;
+                nextTransition++;
             }
             if (i == matches.Count) break;
             var match = matches[i];
@@ -256,6 +315,44 @@ public sealed partial class LocalProfile
         }
         if ((legacy == matches.Count && marker == null) || !Same(position, expected))
             throw new InvalidOperationException("Ladder state does not match the last receipt/calibration.");
+    }
+
+    private static void ValidateEraTransitions(LocalProfileData profile, int legacy, int rankedMatchCount)
+    {
+        if (profile.EraTransitions == null)
+            throw new InvalidOperationException("Missing campaign era history.");
+#if SOLOSTONE_PREBUILT_ENGINE
+        if (profile.EraTransitions.Count != 0 || profile.UnlockedEraId != null)
+            throw new InvalidOperationException("Campaign era history requires the built-in engine.");
+#else
+        if (profile.UnlockedEraId != null && (profile.LadderRuleVersion != LadderRules.RuleVersion ||
+            CampaignEraCatalog.Installed.Next(profile.CurrentEraId)?.Id != profile.UnlockedEraId))
+            throw new InvalidOperationException("Invalid unlocked campaign era.");
+
+        if (profile.EraTransitions.Count == 0)
+        {
+            if (profile.CurrentEraId != ProfileCatalog.MetaId && profile.CurrentEraId != CampaignEraCatalog.FirstEraId &&
+                CampaignEraCatalog.Installed.Find(profile.CurrentEraId) != null)
+                throw new InvalidOperationException("Campaign era requires a recorded transition.");
+            return;
+        }
+        if (profile.LadderRuleVersion != LadderRules.RuleVersion)
+            throw new InvalidOperationException("Campaign era history requires a settled ladder.");
+
+        string era = CampaignEraCatalog.FirstEraId;
+        int previous = legacy;
+        foreach (var transition in profile.EraTransitions)
+        {
+            string nextEra = CampaignEraCatalog.Installed.Next(era)?.Id;
+            if (transition == null || transition.FromEraId != era || nextEra == null || transition.ToEraId != nextEra ||
+                transition.RankedMatchCount <= previous || transition.RankedMatchCount > rankedMatchCount)
+                throw new InvalidOperationException("Invalid campaign era history.");
+            previous = transition.RankedMatchCount;
+            era = nextEra;
+        }
+        if (profile.CurrentEraId != era)
+            throw new InvalidOperationException("Campaign era does not match the recorded transitions.");
+#endif
     }
 
     private static LadderPosition ReceiptPosition(LocalLadderReceipt r, bool before) => LadderRules.Validate(new LadderPosition {

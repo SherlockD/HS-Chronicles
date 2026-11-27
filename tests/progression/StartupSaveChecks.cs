@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Xml.Serialization;
+using SabberStoneCore.Campaigns;
 
 // Which save the client opens on launch (ProfileCatalog.Startup). Every case is plain files: no Unity, no LocalProfile lease.
 // The rule under test: Decide reads only, never throws, and any save it cannot vouch for becomes the ordinary picker, with the
@@ -47,6 +49,7 @@ internal static class StartupSaveChecks
         PendingMatchSave(Path.Combine(root, "pending"));
         MarkerBeforeChecks(Path.Combine(root, "marker-first"));
         EraRoundTrip(Path.Combine(root, "era"));
+        EraTransition(Path.Combine(root, "era-transition"));
         HomeSettle();
         Launch(Path.Combine(root, "launch"));
         RelaunchUnavailable(Path.Combine(root, "relaunch"));
@@ -390,6 +393,131 @@ internal static class StartupSaveChecks
         Check(data.CurrentEraId == "test-era" && data.GoldBalance == gold && ProfileCatalog.ReadCurrentEraId(path) == "test-era"
             && ProfileCatalog.ProfilePathForId(legacy, first.Id) == path, "reopen keeps the profile id, era and gold after an ordinary write");
         Check(ProfileCatalog.ReadCurrentEraId(Profile(legacy, other.Id)) == ProfileCatalog.MetaId, "the other profile keeps its own era");
+    }
+
+    private static void EraTransition(string root)
+    {
+        const string classic = "classic-2014", naxxramas = "curse-of-naxxramas", gnomes = "goblins-vs-gnomes";
+        var installed = CampaignEraCatalog.Installed;
+        Check(installed.Eras.Count == 40 && installed.Eras[0].Id == classic
+            && installed.Eras[39].Id == "reign-of-the-black-empire", "complete chronological campaign catalog");
+        Check(installed.Next(classic).Id == naxxramas && installed.Next(naxxramas).Id == gnomes
+            && ProfileCatalog.EraName(classic) == installed.Find(classic).Title, "catalog orders and names epochs");
+
+        const string content = "<Content rules='rules-v1' cards='cards-v1' collection='collection-v1' economy='economy-v1' heroes='heroes-v1' opponents='opponents-v1' />";
+        string first = "<Era id='classic-2014' title='First' month='2014-06'>" + content + "</Era>";
+        string update = "<Update id='test-update' month='2014-09'>" + content.Replace("rules-v1", "rules-v2") + "</Update>";
+        string next = "<Era id='curse-of-naxxramas' title='Next' month='2014-07'>" + content + update + "</Era>";
+        string later = "<Era id='goblins-vs-gnomes' title='Later' month='2014-12' />";
+        var catalog = ReadEraCatalog(first + next + later);
+        Check(catalog.Next(classic).Updates.Single().Content.RulesId == "rules-v2"
+            && catalog.Next(naxxramas).Id == gnomes, "updates have their own rules without a new era");
+        foreach (string invalid in new[] { first + first, first + next.Replace("2014-07", "2014-01"),
+                     first + next.Replace(" opponents='opponents-v1'", ""), first + next.Replace("2014-09", "2014-05") })
+        {
+            bool rejected = false;
+            try { ReadEraCatalog(invalid); }
+            catch (InvalidDataException) { rejected = true; }
+            Check(rejected, "reject malformed campaign catalogs");
+        }
+
+        string path = Path.Combine(root, "profile.xml");
+        long draftId;
+        int historyCount;
+        using (var profile = new LocalProfile(path))
+        {
+            profile.CommitChange(save => save.CurrentEraId = classic);
+            draftId = profile.CreateDraft("Test campaign deck", "HERO_08").Id;
+            Check(profile.UnlockedNextEra(catalog) == null, "start at the bottom of the ladder");
+            for (int seed = 0; seed < 180 && !profile.Ladder.LegendReached; seed++)
+                SettleRanked(profile, profile.Begin("player-core-mage", "priest", seed));
+            historyCount = profile.History.Count;
+            Check(profile.UnlockedNextEra(catalog)?.Id == naxxramas, "Legend opens the next era");
+            Check(profile.UnlockedNextEra(installed) == null, "a catalog entry alone does not open an era");
+            Check(File.ReadAllText(path).Contains("<UnlockedEraId>curse-of-naxxramas</UnlockedEraId>"),
+                "earned unlock is stored independently of the current era and package readiness");
+        }
+
+        using (var profile = new LocalProfile(path))
+        {
+            Check(profile.CurrentEraId == classic && profile.UnlockedNextEra(catalog)?.Id == naxxramas,
+                "reopen permits staying at Legend or continuing");
+            Check(!profile.TryAdvanceEra(catalog, classic, gnomes), "cannot skip the next era");
+            var pending = profile.Begin("player-core-mage", "priest", 180);
+            Check(!profile.TryAdvanceEra(catalog, classic, naxxramas), "cannot move during a match");
+            SettleRanked(profile, pending);
+            historyCount++;
+            var collection = profile.Collection.ToDictionary(row => row.Key, row => row.Value);
+            int gold = profile.Gold;
+            long dust = profile.DustBalance;
+            var before = File.ReadAllBytes(path);
+            profile.CommitFailure = checkpoint =>
+            {
+                if (checkpoint == "replace") throw new IOException("Campaign test failure");
+            };
+            bool failed = false;
+            try { profile.TryAdvanceEra(catalog, classic, naxxramas); }
+            catch (IOException) { failed = true; }
+            finally { profile.CommitFailure = null; }
+            Check(failed && before.SequenceEqual(File.ReadAllBytes(path)) && profile.CurrentEraId == classic
+                && profile.Ladder.LegendReached, "failed transition leaves the previous save active");
+            LocalProfile.CommitFaultHook = checkpoint =>
+            {
+                if (checkpoint != "replace") return;
+                File.Delete(path);
+                throw new IOException("Partial campaign replace");
+            };
+            try { Check(profile.TryAdvanceEra(catalog, classic, naxxramas), "recovered replacement commits transition"); }
+            finally { LocalProfile.CommitFaultHook = null; }
+            Check(!profile.TryAdvanceEra(catalog, classic, naxxramas)
+                && profile.SetNpcDifficulty(NpcDifficultyIds.Easy), "retry and later saves use the recovered era");
+            Check(profile.CurrentEraId == naxxramas && profile.Stars == 0 && profile.Ladder.PlacementGames == 0
+                && profile.RankedHistory.Count == 0 && profile.History.Count == historyCount, "reset only the active ladder");
+            Check(gold == profile.Gold && dust == profile.DustBalance && collection.Count == profile.Collection.Count
+                && collection.All(row => profile.Collection.TryGetValue(row.Key, out int copies) && copies == row.Value),
+                "collection and balances survive transition");
+        }
+
+        using (var profile = new LocalProfile(path))
+        {
+            Check(profile.CurrentEraId == naxxramas && ProfileCatalog.ReadCurrentEraId(path) == naxxramas
+                && profile.Stars == 0 && profile.History.Count == historyCount
+                && profile.GetDraft(draftId)?.Name == "Test campaign deck", "new era, reset and player deck survive reopen");
+            string priorMatch = profile.History.Last().Id;
+            int currentGold = profile.Gold;
+            profile.Settle(priorMatch, "Won", 8, false);
+            Check(profile.Gold == currentGold && profile.Stars == 0, "retry of an earlier settlement does not change the new era");
+            SettleRanked(profile, profile.Begin("player-core-mage", "priest", 181));
+            Check(profile.RankedHistory.Count == 1 && profile.History.Count == historyCount + 1
+                && profile.RankedHistory[0].Ladder.StarsBefore == 0, "new ranked receipt starts at Bronze");
+        }
+        using (var profile = new LocalProfile(path))
+            Check(profile.CurrentEraId == naxxramas && profile.RankedHistory.Count == 1, "ladder receipts replay across the transition");
+
+        var serializer = new XmlSerializer(typeof(LocalProfileData));
+        LocalProfileData tampered;
+        using (var stream = File.OpenRead(path)) tampered = (LocalProfileData)serializer.Deserialize(stream)!;
+        tampered.EraTransitions.Clear();
+        string invalidPath = Path.Combine(root, "no-transition.xml");
+        using (var stream = File.Create(invalidPath)) serializer.Serialize(stream, tampered);
+        bool rejectedSave = false;
+        try { using var profile = new LocalProfile(invalidPath); }
+        catch (InvalidOperationException) { rejectedSave = true; }
+        Check(rejectedSave, "a later campaign era requires a recorded transition");
+
+        Console.WriteLine("PASS campaign eras: catalog, persistent unlock, atomic advance and ranked receipt replay");
+    }
+
+    private static CampaignEraCatalog ReadEraCatalog(string entries)
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("<CampaignEras schemaVersion='1'>" + entries + "</CampaignEras>"));
+        return CampaignEraCatalog.Read(stream);
+    }
+
+    private static void SettleRanked(LocalProfile profile, LocalMatchRecord match)
+    {
+        profile.Settle(match.Id, "Won", 8, false);
+        profile.AcknowledgeRewardPresentation(match.Id);
     }
 
     private static void HomeSettle()
