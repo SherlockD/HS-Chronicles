@@ -62,6 +62,24 @@ internal static class PremiumProjectionTests
         try
         {
 #if ENGINE_SOURCE
+            using (var adventure = new LocalProfile(Path.Combine(root, "adventure.xml")))
+            {
+                const string card = LocalAdventureReward.HauntedCreeper;
+                Check(!NativeUIProjection.IsNativeCollectible(card, adventure), "unowned adventure card is hidden");
+                adventure.GrantAdventureWingAccess();
+                var deck = LocalDecks.PlayerCoreStarterDecks.First();
+                NativeUIProjection.ValidateStart(adventure, deck.Id, deck, false, adventure: true);
+                var attempt = adventure.BeginAdventureAttempt(deck.Id, deck, 5, 1);
+                adventure.SettleAdventureAttempt(attempt, "Won");
+                var cards = adventure.OwnedCards;
+                Check(NativeUIProjection.IsNativeCollectible(card, adventure)
+                    && NativeUIProjection.DisplayableSetIds(Array.Empty<int>(), cards).Contains((int)SabberStoneCore.Model.Cards.FromId(card).Set)
+                    && NativeUIProjection.CollectionStacks(adventure).Single(row => row.Id == card && row.Premium == 0).Count == 2,
+                    "owned adventure reward and its Wild set are visible");
+                Check(NativeUIProjection.ShopGrantCounts(adventure.Collection, new[] { card }, _ => 1)[card] == 1
+                    && NativeUIProjection.ShopGrantCounts(adventure.Collection, new[] { card }, _ => 2).Count == 0,
+                    "repeated native reward refresh projects only missing copies");
+            }
             using (var welcome = new LocalProfile(Path.Combine(root, "welcome.xml")))
             {
                 Check(welcome.GrantWelcomeIfNew(), "fresh welcome commits before native collection projection");

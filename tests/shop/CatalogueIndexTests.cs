@@ -16,7 +16,7 @@ internal static class CatalogueIndexTests
             .Concat(all.Where(card => extras.Contains(card.Id) && IsStandard(card)))
             .Concat(SabberStoneCore.CardSets.Client.StandardSets.CollectibleIds.SelectMany(SabberStoneCore.Actions.FabledRules.Bundle)
                 .Select(Cards.FromId).Where(card => card != null && !LocalCardCatalog.IsCore(card.Id)))
-            .Select(card => card.Id).ToHashSet(StringComparer.Ordinal);
+            .Select(card => card.Id).Append("FP1_002").ToHashSet(StringComparer.Ordinal);
         var bundleCards = SabberStoneCore.CardSets.Client.StandardSets.CollectibleIds
             .Where(id => SabberStoneCore.Actions.FabledRules.IsFabled(id) || SabberStoneCore.Actions.DeckbuildingRules.HasSideboard(id))
             .SelectMany(id => new[] { id }.Concat(SabberStoneCore.Actions.FabledRules.Bundle(id)))

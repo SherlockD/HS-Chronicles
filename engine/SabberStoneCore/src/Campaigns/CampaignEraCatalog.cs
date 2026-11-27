@@ -15,6 +15,7 @@ namespace SabberStoneCore.Campaigns
         public string Title { get; }
         public DateTime ReleaseMonth { get; }
         public CampaignEraContent Content { get; }
+        public IReadOnlyList<CampaignAdventure> Adventures { get; }
         public IReadOnlyList<CampaignEraUpdate> Updates { get; }
 
         internal CampaignEra(XElement row)
@@ -24,10 +25,13 @@ namespace SabberStoneCore.Campaigns
             ReleaseMonth = CampaignEraCatalog.Month(row);
 
             var content = row.Elements("Content").ToArray();
-            if (content.Length > 1 || row.Elements().Any(child => child.Name != "Content" && child.Name != "Update"))
+            if (content.Length > 1 || row.Elements().Any(child =>
+                child.Name != "Content" && child.Name != "Update" && child.Name != "Adventure"))
                 throw new InvalidDataException("Invalid content declaration for era " + Id);
             if (content.Length == 1) Content = new CampaignEraContent(content[0]);
 
+            var adventures = row.Elements("Adventure").Select(adventure => new CampaignAdventure(Id, adventure)).ToArray();
+            Adventures = Array.AsReadOnly(adventures);
             var updates = row.Elements("Update").Select(update => new CampaignEraUpdate(update)).ToArray();
             var ids = new HashSet<string>(StringComparer.Ordinal);
             DateTime previousMonth = ReleaseMonth;
@@ -40,6 +44,70 @@ namespace SabberStoneCore.Campaigns
             if (Content == null && updates.Length > 0)
                 throw new InvalidDataException("Campaign era updates require base content in " + Id);
             Updates = Array.AsReadOnly(updates);
+        }
+    }
+
+    public sealed class CampaignAdventure
+    {
+        public string Id { get; }
+        public string EraId { get; }
+        public string Title { get; }
+        public string EnglishTitle { get; }
+        public IReadOnlyList<CampaignEncounter> Encounters { get; }
+
+        internal CampaignAdventure(string eraId, XElement row)
+        {
+            Id = CampaignEraCatalog.Identifier(row, "id");
+            EraId = eraId;
+            Title = CampaignEraCatalog.Required(row, "title");
+            string englishTitle = (string)row.Attribute("titleEn");
+            EnglishTitle = string.IsNullOrWhiteSpace(englishTitle) ? Title : englishTitle;
+            var children = row.Elements().ToArray();
+            if (children.Any(child => child.Name != "Encounter"))
+                throw new InvalidDataException("Invalid adventure declaration for " + Id);
+            var encounters = children.Select(child => new CampaignEncounter(child)).ToArray();
+            if (encounters.Select(encounter => encounter.ScenarioId).Distinct().Count() != encounters.Length)
+                throw new InvalidDataException("Duplicate encounter in " + Id);
+            Encounters = Array.AsReadOnly(encounters);
+        }
+    }
+
+    public sealed class CampaignEncounter
+    {
+        public int ScenarioId { get; }
+        public int DefinitionVersion { get; }
+        public int BoardId { get; }
+        public string HeroId { get; }
+        public string HeroPowerId { get; }
+        public IReadOnlyDictionary<string, int> Deck { get; }
+        public IReadOnlyList<string> Dependencies { get; }
+
+        internal CampaignEncounter(XElement row)
+        {
+            ScenarioId = Positive(row, "scenario");
+            DefinitionVersion = Positive(row, "version");
+            BoardId = Positive(row, "board");
+            HeroId = CampaignEraCatalog.Required(row, "hero");
+            HeroPowerId = CampaignEraCatalog.Required(row, "power");
+            var deck = new Dictionary<string, int>(StringComparer.Ordinal);
+            var dependencies = new List<string>();
+            foreach (var child in row.Elements())
+            {
+                string id = CampaignEraCatalog.Required(child, "id");
+                if (child.HasElements) throw new InvalidDataException("Invalid encounter entry " + id);
+                if (child.Name == "Card" && deck.TryAdd(id, Positive(child, "count"))) continue;
+                if (child.Name == "Requires" && !dependencies.Contains(id)) { dependencies.Add(id); continue; }
+                throw new InvalidDataException("Unknown or repeated encounter entry " + id);
+            }
+            Deck = new System.Collections.ObjectModel.ReadOnlyDictionary<string, int>(deck);
+            Dependencies = dependencies.AsReadOnly();
+        }
+
+        private static int Positive(XElement row, string name)
+        {
+            if (int.TryParse((string)row.Attribute(name), NumberStyles.None, CultureInfo.InvariantCulture, out int value) && value > 0)
+                return value;
+            throw new InvalidDataException("Invalid encounter " + name);
         }
     }
 
@@ -105,6 +173,7 @@ namespace SabberStoneCore.Campaigns
         public static CampaignEraCatalog Installed => Embedded.Value;
         public IReadOnlyList<CampaignEra> Eras { get; }
         private readonly Dictionary<string, int> positions = new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly Dictionary<string, CampaignAdventure> adventures = new Dictionary<string, CampaignAdventure>(StringComparer.Ordinal);
 
         private CampaignEraCatalog(CampaignEra[] eras)
         {
@@ -117,12 +186,32 @@ namespace SabberStoneCore.Campaigns
                     throw new InvalidDataException("Duplicate campaign era " + era.Id);
                 if (i > 0 && era.ReleaseMonth < eras[i - 1].ReleaseMonth)
                     throw new InvalidDataException("Campaign era is out of chronological order: " + era.Id);
+                foreach (var adventure in era.Adventures)
+                    if (!adventures.TryAdd(adventure.Id, adventure))
+                        throw new InvalidDataException("Duplicate campaign adventure " + adventure.Id);
+            }
+            foreach (var era in eras)
+            {
+                ValidateAdventureReferences(era.Id, era.Content);
+                foreach (var update in era.Updates)
+                    ValidateAdventureReferences(era.Id, update.Content);
             }
             Eras = Array.AsReadOnly(eras);
         }
 
+        private void ValidateAdventureReferences(string eraId, CampaignEraContent content)
+        {
+            if (content == null) return;
+            foreach (string id in content.AdventureIds)
+                if (FindAdventure(id)?.EraId != eraId)
+                    throw new InvalidDataException("Adventure " + id + " is not declared for era " + eraId);
+        }
+
         public CampaignEra Find(string id) =>
             id != null && positions.TryGetValue(id, out int index) ? Eras[index] : null;
+
+        public CampaignAdventure FindAdventure(string id) =>
+            id != null && adventures.TryGetValue(id, out var adventure) ? adventure : null;
 
         public CampaignEra Next(string id) =>
             id != null && positions.TryGetValue(id, out int index) && index + 1 < Eras.Count ? Eras[index + 1] : null;

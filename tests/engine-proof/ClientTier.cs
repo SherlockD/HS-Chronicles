@@ -33,6 +33,7 @@ internal static class ClientTier
         AgentCoinChoiceProof.Run();
         LegendaryEliteProof.Run();
         HistoryHandDisplayProof.Run();
+        AdventureTransportProof.Run();
         PetTransportProof.Run();   // a Facility group proof: the engine-proof suite finds it by reflection, so it needs the client build
         // Case() records a failure instead of throwing, and StandardSetsProof.Run clears the record when it starts: nothing that
         // calls Case may run directly before it. Leyline and Batch14K7 go through the selected list below.

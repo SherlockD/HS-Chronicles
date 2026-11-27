@@ -114,6 +114,16 @@ internal static class NativeHomeTests
         box.m_GameModesButton.gameObject.SetActive(false);
         NativeHomeUI.DisableMode(box, box.m_GameModesButton);
         Check(!box.m_GameModesButton.gameObject.activeSelf && box.m_EmptyFourthButton.activeSelf, "keep native decorative plate");
+        NativeHomeUI.EnableModes(box, "Режимы");
+        Check(box.m_GameModesButton.gameObject.activeSelf && !box.m_EmptyFourthButton.activeSelf
+            && !box.m_GameModesButton.DisabledVisual && box.m_GameModesButton.GetText() == "Режимы"
+            && box.m_GameModesButton.IsEnabled(UIEventType.PRESS) && box.m_GameModesButton.IsEnabled(UIEventType.RELEASE),
+            "local Modes replaces the plate and is clickable");
+        Check(!NativeHomeUI.ShowModeTooltip(box, box.m_GameModesButton, localModesTooltip: "Приключения")
+            && box.m_GameModesButton.Tooltip.Body == "Приключения",
+            "playable Modes shows its local Adventures tooltip");
+        Check(!NativeHomeUI.HideModeTooltip(box, box.m_GameModesButton) && !box.m_GameModesButton.Tooltip.Visible,
+            "leaving the Modes button dismisses its tooltip");
         // After a match Box.ShowGameModesButton shows the Modes face and hides the plate: restore the boot look.
         box.m_EmptyFourthButton.SetActive(false);
         box.m_GameModesButton.gameObject.SetActive(true);

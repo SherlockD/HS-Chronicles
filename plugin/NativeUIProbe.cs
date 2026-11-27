@@ -160,6 +160,7 @@ internal static partial class NativeUIProbe
         log = logger; runId = launchId;
         NativeShop.Initialize(harmony, logger);
         NativeHiddenEntries.Initialize(harmony, logger);
+        InitializeAdventure(harmony);
         NativeHelpUI.Initialize(harmony, logger);
         NativeRematchUI.Initialize(logger);
         NativeDeckPickerGuide.Initialize(logger);
@@ -397,9 +398,15 @@ internal static partial class NativeUIProbe
             if (sceneWaiting && SplashScreen.Get() == null && !SceneMgr.Get().IsTransitioning() && SceneMgr.Get().GetMode() == target)
             {
                 sceneWaiting = false; State("SceneLoaded:" + target);
+                if (target == SceneMgr.Mode.ADVENTURE)
+                    try { AdventureSceneLoaded(); } catch (Exception error) { AdventureLoadFailed(error); }
             }
             if (sceneWaiting && Time.realtimeSinceStartup - sceneBegan > 60)
-                throw new TimeoutException("Native scene did not finish: " + target);
+            {
+                var timeout = new TimeoutException("Native scene did not finish: " + target);
+                if (target == SceneMgr.Mode.ADVENTURE) AdventureLoadFailed(timeout);
+                else throw timeout;
+            }
             NativeResultsUI.Update();
             NativeAchievementToast.Update();
             NativeAchievements.Update();
@@ -411,6 +418,7 @@ internal static partial class NativeUIProbe
             RoutePendingRewardHome();
             RouteFinishedMatchToPicker();
             BindPicker();
+            UpdateAdventureUI();
             NativeRematchUI.Update(pickerTray);
             NativeDeckPickerGuide.Update(pickerTray);
             NativeDeckRecord.Update(pickerTray);
@@ -462,7 +470,7 @@ internal static partial class NativeUIProbe
 
     private static void RouteFinishedMatchToPicker()
     {
-        if (!SceneMgr.IsInitialized()) return;
+        if (!SceneMgr.IsInitialized() || ClientBridge.OwnsAdventureMatch) return;
         bool stable = active && ready && !sceneWaiting && !SceneMgr.Get().IsTransitioning() && !NativeRewardUI.Active;
         if (LocalRewardPresentation.ShouldRouteFinishedToPicker(stable, Profile?.PendingRewardPresentation != null,
             Profile?.Pending != null, LocalLadder.Screen, SceneMgr.Get().GetMode() == SceneMgr.Mode.GAMEPLAY))
@@ -600,6 +608,8 @@ internal static partial class NativeUIProbe
                 throw new InvalidOperationException("Native premium ownership mismatch: " + stack.Id + "/" + stack.Premium);
         Tournament.Init();
         if (Hash() != baselineHash) throw new InvalidOperationException("Profile changed during projection");
+        var wing = Profile.AdventureWing;
+        resumeAdventureOnHub = Profile.AdventureRecovered || Profile.PendingAdventureReward != null || wing.Progress > wing.Ack;
         ready = true; State("Ready:reward startup intentionally omitted; local deck editor enabled");
         Navigate(SceneMgr.Mode.HUB);
     }
@@ -1445,7 +1455,7 @@ internal static partial class NativeUIProbe
     {
         try
         {
-            if (!PickerCanStart) return;
+            if (!PickerCanStart || SceneMgr.Get().GetMode() != SceneMgr.Mode.TOURNAMENT || ClientBridge.OwnsAdventureMatch) return;
             var tray = UnityEngine.Object.FindFirstObjectByType<DeckPickerTrayDisplay>();
             var native = tray?.GetSelectedCollectionDeck();
             selected = "";
@@ -1499,11 +1509,11 @@ internal static partial class NativeUIProbe
         __instance.FireButtonPressEvent(Box.ButtonType.OPEN_PACKS); return false;
     }
     private static bool AtHome() => active && ready && SceneMgr.IsInitialized() && SceneMgr.Get().GetMode() == SceneMgr.Mode.HUB;
-    private static bool HomeModeHover(UIEvent __0) => !AtHome() || NativeHomeUI.ShowModeTooltip(Box.Get(), __0.GetElement());
+    private static bool HomeModeHover(UIEvent __0) => !AtHome() || NativeHomeUI.ShowModeTooltip(Box.Get(), __0.GetElement(), HomeModesTooltip);
     private static bool HomeModeOut(UIEvent __0) => !AtHome() || NativeHomeUI.HideModeTooltip(Box.Get(), __0.GetElement());
     private static void HomeStoreTooltip(StoreButton __instance) { if (AtHome()) NativeHomeUI.StoreTooltip(__instance); }
     // BoxScrollButton bypasses Box hover events when the retail mode feature is unavailable.
-    private static bool HomeScrollHover(BoxScrollButton __instance) => !AtHome() || NativeHomeUI.ShowModeTooltip(Box.Get(), __instance);
+    private static bool HomeScrollHover(BoxScrollButton __instance) => !AtHome() || NativeHomeUI.ShowModeTooltip(Box.Get(), __instance, HomeModesTooltip);
     private static bool HomeScrollOut(BoxScrollButton __instance) => !AtHome() || NativeHomeUI.HideModeTooltip(Box.Get(), __instance);
 
     private static bool LocalHubStart()
@@ -1592,7 +1602,8 @@ internal static partial class NativeUIProbe
         NativeHiddenEntries.Apply(__instance);
         NativeHomeUI.RefreshDrawer(__instance, Profile.UnopenedPacks, message => log.LogInfo(message));
         NativeShop.RefreshHomeStore();
-        if (report) log.LogInfo("NATIVE_MENU home enabled=TRADITIONAL,ARENA,OPEN_PACKS,COLLECTION; unsupported modes disabled with backlog tooltips; journal hidden");
+        if (report) log.LogInfo("NATIVE_MENU home enabled=TRADITIONAL,ARENA,OPEN_PACKS,COLLECTION"
+            + (HomeModesReady ? ",GAME_MODES" : "") + "; unsupported modes disabled with backlog tooltips; journal hidden");
     }
 
     public static void Navigate(SceneMgr.Mode mode)
@@ -1602,7 +1613,7 @@ internal static partial class NativeUIProbe
             if (!ready || sceneWaiting || replayRunning || LocalLadder.Screen == "Playing" || LocalLadder.Screen == "Starting") return;
             mode = NativeArena.NavigationTarget(mode);
             if (!NativeResultsUI.CanNavigate(mode == SceneMgr.Mode.HUB)) return;
-            if (mode != SceneMgr.Mode.HUB && mode != SceneMgr.Mode.PACKOPENING && mode != SceneMgr.Mode.COLLECTIONMANAGER && mode != SceneMgr.Mode.TOURNAMENT && mode != SceneMgr.Mode.DRAFT)
+            if (mode != SceneMgr.Mode.HUB && mode != SceneMgr.Mode.PACKOPENING && mode != SceneMgr.Mode.COLLECTIONMANAGER && mode != SceneMgr.Mode.TOURNAMENT && mode != SceneMgr.Mode.DRAFT && mode != SceneMgr.Mode.ADVENTURE)
                 throw new ArgumentException("Unsupported native UI target");
             // Arena refused (its notice is up): from HUB stay put; from anywhere else (the post-game route) go home, never strand.
             if (mode == SceneMgr.Mode.DRAFT && !NativeArena.PrepareScene())
@@ -1631,6 +1642,7 @@ internal static partial class NativeUIProbe
                 Processor.QueueJob("NativeUI.HideSplash", SplashScreen.Get().Hide(transition), Array.Empty<IJobDependency>());
             else Processor.QueueJob(transition);
         }
+        catch (Exception error) when (mode == SceneMgr.Mode.ADVENTURE) { AdventureLoadFailed(error); }
         catch (Exception error) { Fail(error); }
     }
     // Leaves a scene that never finished loading through the client's own navigation: retail itself calls SetNextMode(HUB)
@@ -1651,6 +1663,7 @@ internal static partial class NativeUIProbe
     private static IEnumerator<IAsyncJobResult> StageScene(SceneMgr.Mode mode)
     {
         try { SceneMgr.Get().SetNextMode(mode); }
+        catch (Exception error) when (mode == SceneMgr.Mode.ADVENTURE) { AdventureLoadFailed(error); }
         catch (Exception error) { Fail(error); }
         yield break;
     }
@@ -2111,8 +2124,8 @@ internal static partial class NativeUIProbe
     private static bool Preferences(List<GameSaveKeyId> __0, GameSaveDataManager.OnRequestDataResponseDelegate __1)
     {
         if (!active) return true;
-        bool valid = __0 != null && __0.Count > 0 && __0.All(k => NativeUIProjection.AllowedPreference(k.ToString()));
-        if (valid) foreach (var key in __0) EnsurePreference(key);
+        bool valid = __0 != null && __0.Count > 0 && __0.All(k => NativeUIProjection.AllowedPreference(k.ToString()) || AdventurePreference(k));
+        if (valid) foreach (var key in __0) { if ((int)key != 0) EnsurePreference(key); }
         else Fail(new InvalidOperationException("Unknown preference request: " + string.Join(",", __0 ?? new List<GameSaveKeyId>())));
         callbacks.Enqueue(() => __1?.Invoke(valid)); return false;
     }
@@ -2120,7 +2133,9 @@ internal static partial class NativeUIProbe
     {
         if (!active) return true;
         bool valid = __0 != null && __0.Count > 0 && __0.All(r => r != null
-            && NativeUIProjection.AllowedPreferenceSave(r.Key.ToString(), r.Subkey.ToString(), r.Long_Values));
+            && (NativeUIProjection.AllowedPreferenceSave(r.Key.ToString(), r.Subkey.ToString(), r.Long_Values)
+                || AdventurePreference(r.Key) && (int)r.Key != 0 && r.Subkey == GameSaveKeySubkeyId.ADVENTURE_HAS_SEEN_FIRST_TIME_FLOW
+                    && r.Long_Values?.Length == 1 && r.Long_Values[0] == 1));
         try
         {
             if (valid) foreach (var request in __0)

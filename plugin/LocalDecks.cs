@@ -37,6 +37,18 @@ public sealed class LocalDeck
         cards = pairs.SelectMany(card => new[] { card, card }).Concat(singles ?? new string[0]).ToArray();
         LocalDecks.ValidateFabled(cards);
     }
+    internal bool IsEncounter { get; }
+
+    internal LocalDeck(int scenario, EngineCard boss, IReadOnlyList<EngineCard> encounterCards)
+    {
+        Id = "adventure:" + scenario.ToString(CultureInfo.InvariantCulture);
+        Name = Opponent = boss.Name;
+        Hero = boss.Id;
+        Strategy = "";
+        Style = DeckStyle.Value;
+        IsEncounter = true;
+        cards = encounterCards.Select(card => card.Id).ToArray();
+    }
     internal LocalDeck(string name, string hero, string[] cardIds)
     {
         Id = "custom"; Name = name; Hero = hero; Opponent = "Custom deck"; Strategy = "Custom deck";
@@ -46,6 +58,7 @@ public sealed class LocalDeck
     public List<EngineCard> Build()
     {
         var result = cards.Select(Cards.FromId).ToList();
+        if (IsEncounter) return result; // Already admitted by the encounter catalog.
         if (result.Count != LocalDecks.DeckSize(cards) || result.Any(c => c == null)) throw new InvalidOperationException("Invalid local deck " + Id);
 #if ENGINE_SOURCE
         SabberStoneCore.Actions.DeckbuildingRules.Validate(cards, sideboards, SabberStoneCore.Enums.FormatType.FT_WILD);

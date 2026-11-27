@@ -13,6 +13,7 @@ NativeCrafting.RunBatchTests();
 NativeCrafting.RunHookTests();
 NativeStringsTests.Run();
 NativeHomeTests.Run();
+AdventureMenuFlowTests.Run();
 NativeArenaBoundary.NativeArena.RunTests();
 StatusRoutineTests.Run();
 TurnBannerHoldTests.Run();

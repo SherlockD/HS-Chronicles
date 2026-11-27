@@ -15,6 +15,7 @@
     <Compile Include="../shared/CosmeticsFixture.cs" Link="CosmeticsFixture.cs" /><Compile Include="../shared/StandardDeckFixture.cs" Link="StandardDeckFixture.cs" />
     <Compile Include="../shared/StandardBatchData.cs" Link="StandardBatchData.cs" />
     <Compile Include="../../plugin/LocalProfile.cs" />
+    <Compile Include="../../plugin/LocalProfileAdventures.cs" Link="LocalProfileAdventures.cs" />
     <Compile Include="../../plugin/LocalDeckRecord.cs" />
     <Compile Include="../../plugin/LocalAchievements.cs" Link="LocalAchievements.cs" />
     <Compile Include="../../plugin/LocalProfileAchievements.cs" Link="LocalProfileAchievements.cs" />

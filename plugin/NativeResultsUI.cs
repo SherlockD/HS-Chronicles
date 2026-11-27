@@ -223,8 +223,8 @@ internal static class NativeResultsUI
     }
 
     private static bool FalseForOwned(EndGameScreen __instance, ref bool __result)
-    { if (!Owned(__instance)) return true; __result = false; return false; }
-    private static bool SkipForOwned(EndGameScreen __instance) => !Owned(__instance);
+    { if (!ClientBridge.OwnsAdventureMatch && !Owned(__instance)) return true; __result = false; return false; }
+    private static bool SkipForOwned(EndGameScreen __instance) => !ClientBridge.OwnsAdventureMatch && !Owned(__instance);
     private static bool BeforeTelemetryTimeout(EndGameScreen __instance, string __0, ref bool __result,
         ref float ___m_timeoutTimerStartTime, ref bool ___m_hasTimedOutAndLogged)
     {

@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <CampaignEras schemaVersion="1">
   <Era id="classic-2014" title="Классика 2014" month="2014-06" />
-  <Era id="curse-of-naxxramas" title="Проклятие Наксрамаса" month="2014-07" />
+  <Era id="curse-of-naxxramas" title="Проклятие Наксрамаса" month="2014-07">
+    <Adventure id="curse-of-naxxramas" title="Проклятие Наксрамаса" titleEn="Curse of Naxxramas">
+      <Encounter scenario="273" version="1" board="5" hero="NAX1_01" power="NAX1_04">
+        <Requires id="NAX1_03" />
+        <Requires id="NAX1_05" />
+      </Encounter>
+    </Adventure>
+  </Era>
   <Era id="goblins-vs-gnomes" title="Goblins vs Gnomes" month="2014-12" />
   <Era id="blackrock-mountain" title="Blackrock Mountain" month="2015-04" />
   <Era id="the-grand-tournament" title="The Grand Tournament" month="2015-08" />

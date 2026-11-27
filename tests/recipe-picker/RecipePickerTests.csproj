@@ -16,6 +16,7 @@
     <Compile Include="../../plugin/NativeDeckRunes.cs" />
     <Compile Include="../../plugin/RecipeLibrary.cs" />
     <Compile Include="../../plugin/LocalProfile.cs" />
+    <Compile Include="../../plugin/LocalProfileAdventures.cs" Link="LocalProfileAdventures.cs" />
     <Compile Include="../../plugin/LocalAchievements.cs" Link="LocalAchievements.cs" />
     <Compile Include="../../plugin/LocalProfileAchievements.cs" Link="LocalProfileAchievements.cs" />
     <Compile Include="../../plugin/LocalProfileCheats.cs" />

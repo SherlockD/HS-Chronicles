@@ -1016,6 +1016,50 @@ foreach (string caller in new[] { "ConfigureHomeButtons", "PublishBoosters" })
         failures.Add(caller + ": home badge refresh missing");
 if (!Calls(plugin, pluginMetadata, Method(pluginMetadata, "NativeHiddenEntries", "Apply")).Contains(("NativeHomeUI", "DisableMode")))
     failures.Add("Home policy no longer restores disabled native mode faces");
+if (!Calls(plugin, pluginMetadata, Method(pluginMetadata, "NativeHiddenEntries", "Apply")).Contains(("NativeHomeUI", "EnableModes"))
+    || !Calls(plugin, pluginMetadata, Method(pluginMetadata, "NativeHiddenEntries", "Block")).Contains(("NativeUIProbe", "OpenLocalModes")))
+    failures.Add("Home policy no longer enables the Modes face and routes its press to Adventures");
+if (!Calls(game, gameMetadata, Method(gameMetadata, "Box", "OnButtonPressed")).Contains(("Box", "OnModesButtonPressed")))
+    failures.Add("The native home Modes button no longer reaches its Adventures hook");
+// These unique entry points cover both the selected-deck and template forms. Guard their
+// position-based Harmony arguments as well as the final handoff to Network.FindGame.
+string[] adventureFindArgs = { "GameType", "FormatType", "Int32", "Int32", "Int64", "String",
+    "Nullable`1<Int32>", "Boolean", "Byte[]", "Nullable`1<Int32>", "Int64", "GameType", "Int32" };
+MethodSignature(gameMetadata, "GameMgr", "FindGame", adventureFindArgs, "Void", signatures);
+MethodSignature(gameMetadata, "GameMgr", "FindGameInternal",
+    adventureFindArgs.Take(6).Concat(new[] { "Int32" }).Concat(adventureFindArgs.Skip(6)).ToArray(), "Void", signatures);
+foreach (var (owner, method, calledOwner, called) in new[] {
+    ("DeckPickerTrayDisplay", "PlayGame", "GameMgr", "FindGame"),
+    ("GameMgr", "FindGame", "GameMgr", "FindGameInternal"),
+    ("GameMgr", "FindGameWithHero", "GameMgr", "FindGameInternal"),
+    ("GameMgr", "FindGameInternal", "Network", "FindGame"),
+    ("CollectionDeckBoxVisual", "CanSelectDeck", "CollectionDeck", "get_IsValidForRuleset"),
+    ("CollectionDeck", "get_IsValidForRuleset", "CollectionDeck", "GetRuleset"),
+    ("CollectionDeck", "GetRuleset", "CollectionDeck", "get_FormatType"),
+    ("SideboardDeck", "get_FormatType", "CollectionDeck", "get_FormatType"),
+    ("CollectionDeckBoxVisual", "IsDeckPlayable", "CollectionDeck", "get_FormatType"),
+    ("CollectionDeckBoxVisual", "IsDeckPlayable", "CollectionDeck", "GetInvalidSideboardCardCount"),
+    ("CollectionDeckBoxVisual", "IsDeckPlayable", "CollectionDeck", "GetMissingSideboardCardCount"),
+    ("CollectionDeckBoxVisual", "IsDeckPlayable", "CollectionDeck", "DeckTemplate_HasUnownedRequirements"),
+    ("CollectionDeck", "IsEntityDefValid", "CollectionDeckSlot", "get_Owned"),
+    ("AdventureProgressMgr", "OnAdventureProgress", "Network", "GetAdventureProgressResponse"),
+    ("AdventureProgressMgr", "SetWingAck", "Network", "AckWingProgress") })
+    if (!Calls(game, gameMetadata, Method(gameMetadata, owner, method)).Contains((calledOwner, called)))
+        failures.Add(owner + "." + method + ": the stock adventure route changed before " + calledOwner + "." + called);
+MethodSignature(gameMetadata, "RewardPopups", "DisplayLoadedRewardObject", new[] { "Reward", "Object" }, "Void", signatures);
+foreach (var (method, calledOwner, called) in new[] {
+    ("Initialize", "NativeUIProbe", "InitializeAdventure"),
+    ("AdventureFindGame", "NativeUIProbe", "StartAdventureSelection"),
+    ("AdventureFindGame", "NativeUIProbe", "AllowOtherFindGame"),
+    ("StartAdventureSelection", "ClientBridge", "StartAdventureMatch"),
+    ("StartAdventureSelection", "NativeUIProbe", "AdventureContentsMatch"),
+    ("BindAdventurePicker", "DeckPickerTrayDisplay", "OverridePlayButtonCallback"),
+    ("AdventureDeckFormat", "NativeUIProbe", "get_AtAdventurePicker"),
+    ("AdventureDeckFormat", "LocalProfile", "IsDeckComplete"),
+    ("PresentAdventureReward", "RewardData", "LoadRewardObject"),
+    ("ShowLoadedAdventureReward", "RewardPopups", "DisplayLoadedRewardObject") })
+    if (!Calls(plugin, pluginMetadata, Method(pluginMetadata, "NativeUIProbe", method)).Contains((calledOwner, called)))
+        failures.Add("Adventure UI: " + method + " no longer uses " + calledOwner + "." + called);
 if (!Calls(plugin, pluginMetadata, Method(pluginMetadata, "NativeHiddenEntries", "Apply")).Contains(("NativeHomeUI", "ApplyModePolicy")))
     failures.Add("Home policy no longer relabels/reorders the disabled mode faces");
 if (!Calls(plugin, pluginMetadata, Method(pluginMetadata, "NativeHiddenEntries", "Apply")).Contains(("NativeHomeUI", "HideJournalLabels")))
@@ -1534,6 +1578,13 @@ static IEnumerable<(string Type, string Method)> Calls(PEReader pe, MetadataRead
             {
                 var called = reader.GetMethodDefinition((MethodDefinitionHandle)handle);
                 yield return (reader.GetString(reader.GetTypeDefinition(called.GetDeclaringType()).Name), reader.GetString(called.Name));
+            }
+            else if (handle.Kind == HandleKind.MemberReference)
+            {
+                var member = reader.GetMemberReference((MemberReferenceHandle)handle);
+                if (member.Parent.Kind == HandleKind.TypeReference)
+                    yield return (reader.GetString(reader.GetTypeReference((TypeReferenceHandle)member.Parent).Name),
+                        reader.GetString(member.Name));
             }
         }
         offset += opcode.OperandType switch {

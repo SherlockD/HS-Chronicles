@@ -13,7 +13,7 @@ using UnityEngine;
 using SabberStoneCore.Tasks.SimpleTasks;
 using SabberStoneCore.Auras;
 
-internal static class ClientBridge
+internal static partial class ClientBridge
 {
     private static readonly string[] RequiredPaladinDefinitions = {
         "HERO_04", "HERO_04bp", "CS2_101t",
@@ -148,6 +148,7 @@ internal static class ClientBridge
         Patch(harmony, typeof(DialogManager), "ShowExistingAccountPopup", nameof(SkipAccountPrompt));
         Patch(harmony, typeof(EndGameScreen), "UpdateRewards", nameof(SkipLocalRewards), Type.EmptyTypes);
         Patch(harmony, typeof(EndGameScreen), "Show", nameof(ShowLocalResult), Type.EmptyTypes);
+        InitializeAdventureEndScreen(harmony);
         Patch(harmony, typeof(ThinkEmoteManager), "Update", nameof(AllowIdleThinkEmotes), Type.EmptyTypes);
         Patch(harmony, typeof(Gameplay), "OnBoardLoaded", nameof(RetryBoardLoad));
         StartupTiming.Mark("bridge-transport-patches");
@@ -384,14 +385,19 @@ internal static class ClientBridge
 #endif
         NativeConcedeStallRecovery.Update(staged && requested && localConnected && gameplay && match?.Game != null,
             match?.Game?.State == SabberStoneCore.Enums.State.COMPLETE, match?.HumanConceded ?? false, matchId, log);
-        LocalLadder.Observe(match, message => log.LogError(message));
+        if (OwnsAdventureMatch) ObserveAdventure(gameplay);
+        else LocalLadder.Observe(match, message => log.LogError(message));
         NativeUIProbe.Update(ready);
         NativePlaytest.Update(match, runId);
         if (staged && !requested && Time.realtimeSinceStartup - stageTime > 90)
         {
             log.LogError("LOCAL_STAGE_TIMEOUT: native gameplay never requested match state");
-            LocalLadder.CancelUnstartedStage(message => log.LogError(message));
-            Application.Quit(44);
+            if (OwnsAdventureMatch) InterruptAdventure();
+            else
+            {
+                LocalLadder.CancelUnstartedStage(message => log.LogError(message));
+                Application.Quit(44);
+            }
             return;
         }
         if (ready || LocalLadder.Profile == null || !GameDbf.IsLoaded || !SceneMgr.IsInitialized() || SceneMgr.Get().LoadingScreen == null
@@ -455,7 +461,7 @@ internal static class ClientBridge
     private static void EnsureCanStart()
     {
         if (!NativeResultsUI.CanStart) throw new InvalidOperationException("Reward presentation is still active.");
-        if (!ready || (match?.Game != null && match.Game.State != SabberStoneCore.Enums.State.COMPLETE))
+        if (!ready || OwnsAdventureMatch || staged && !requested || (match?.Game != null && match.Game.State != SabberStoneCore.Enums.State.COMPLETE))
             throw new InvalidOperationException("Native match is not ready.");
     }
 
@@ -524,30 +530,7 @@ internal static class ClientBridge
                     id => NativeCardKnown(id) && NpcPresentationSettings.IsHeroSkin(NativeCardType(id), NativeCardClass(id), baseHeroClass),
                     NativeCardBackKnown, id => NativeCardKnown(id) && NpcPresentationSettings.IsHeroPower(NativeCardType(id)));
             }
-            match.NativeNpcIdle = NpcClientIdle;
-            match.NativeNpcTurnSynchronized = NpcTimerSynchronized;
-            match.NativeNpcBusyReason = NpcClientBusyReason;
-#if ENGINE_SOURCE
-            match.NativeOpposingChoiceRevealed = OpposingChoiceRevealed;
-            match.NativeNpcPowerIdle = NpcPowerIdle;
-            match.NativeOpposingSourceSpellActive = OpposingSourceSpellActive;
-            match.NativeOpposingChoiceReceived = id => GameState.Get()?.GetOpponentEntityChoices()?.ID == id;
-            match.NativeHumanChoicePresentation = HumanChoicePresentation;
-#endif
-            match.NativeNpcSquelched = NativeNpcPresence.NpcSquelched;
-            match.NativeNpcUserUI = SendNpcUserUI;
-            // START taunt playback is not reliably exposed by client state; qualification may override the default.
-            match.NativeNpcStartingTaunt = () => match.PresentationSettings.NativeStartingTaunt;
-            match.NativeHumanInputReady = () => NativeTestControl.TurnInputReady(match);
-            match.NativeHumanTimerReady = () => NativeTestControl.TurnInputReady(match, forTimer: true);
-            match.TimerTrace = line => log.LogInfo("PLAYER_TURN_TIMER " + line);
-            match.NativePresentationInputReady = NpcPresentationInputReady;
-            match.BotTrace = line => log.LogInfo("LOCAL_AI " + line);
-            match.ChoiceTrace = line => log.LogInfo("LOCAL_CHOICE_OPEN " + line);
-            match.EventTrace = line => log.LogInfo("MATCH_EVENT " + line);
-#if !SOLOSTONE_RELEASE
-            match.NativeEntityDiagnostic = NativeTestControl.ClientEntityDiagnostic;
-#endif
+            ConfigureNativeMatch();
             // Every live match, including legacy/casual opponents without a catalog profile. Diagnostics are fail-open.
             try
             {
@@ -581,53 +564,93 @@ internal static class ClientBridge
                     log.LogWarning("PLAYTEST engine source build stamp missing; this record cannot be replayed");
             }
             catch (Exception error) { try { log.LogWarning("match-journal unavailable: " + error.Message); } catch { } }
-            StartMatch = match.Start;
-#if STANDARD_PROOF
-            match.TradeTrace = recordJson => File.AppendAllText(reports + @"\trade-proof.jsonl",
-                StandardProofNative.Envelope(runId,matchId,NativeTestControl.AttributeTrace(recordJson))+"\n");
-            Option = (id,index,target,sub,position) => {
-                match.TraceInputNonce=NativeTestControl.SemanticNonce ?? StandardProofNative.InputNonce(reports + @"\input.json",runId,matchId,id,index);
-                match.SendOption(id,index,target,sub,position);
-            };
-#else
-            Option = match.SendOption;
-#endif
-            Choices = match.SendChoices;
-            Concede = match.Concede;
-            requested = false;
-            npcGameplaySeen = false;
-            boardLoadRetried = false;
-            staged = true;
-            localConnected = true;
-            stageTime = Time.realtimeSinceStartup;
-            // Last refusal point before the stage jobs queue: the file is retired here so it can never apply to a second match.
-            scenario?.Consume(message => log.LogInfo(message));
-            var manager = GameMgr.Get();
-            Set(manager, "m_gameType", GameType.GT_VS_AI);
-            Set(manager, "m_nextGameType", GameType.GT_VS_AI);
-            Set(manager, "m_nextFormatType", NativeUIProbe.LocalDeckFormat);
-            Set(manager, "m_nextMissionId", 0);
-            if (nativeMatchmaking) NativeMatchmaking.Begin();
-            var transition = new JobDefinition("Offline.StageGame", StageGame(), Array.Empty<IJobDependency>());
-            if (SplashScreen.Get() != null)
-                Processor.QueueJob("Offline.HideSplash", SplashScreen.Get().Hide(transition), Array.Empty<IJobDependency>());
-            else Processor.QueueJob(transition);
+            QueueLocalGame(nativeMatchmaking, scenario, 0, 0);
         }
         catch (Exception error)
         {
             // Nothing was queued: drop the half-staged match so the stage timeout never fires, and let the caller
             // clear the unstarted Pending instead of quitting into an abandoned (lost) match.
             log.LogError("LOCAL_STAGE_FAILED " + error);
-            match?.StopNpc();
-            playtestRecord?.Dispose();
-            playtestRecord = null;
-            match = null;
-            matchId = null;
-            staged = false;
-            localConnected = false;
-            StartMatch = null; Option = null; Choices = null; Concede = null;
+            ClearLocalStage();
             throw new InvalidOperationException("Native match could not be staged: " + error.Message, error);
         }
+    }
+
+    private static void ConfigureNativeMatch()
+    {
+        match.NativeNpcIdle = NpcClientIdle;
+        match.NativeNpcTurnSynchronized = NpcTimerSynchronized;
+        match.NativeNpcBusyReason = NpcClientBusyReason;
+#if ENGINE_SOURCE
+        match.NativeOpposingChoiceRevealed = OpposingChoiceRevealed;
+        match.NativeNpcPowerIdle = NpcPowerIdle;
+        match.NativeOpposingSourceSpellActive = OpposingSourceSpellActive;
+        match.NativeOpposingChoiceReceived = id => GameState.Get()?.GetOpponentEntityChoices()?.ID == id;
+        match.NativeHumanChoicePresentation = HumanChoicePresentation;
+#endif
+        match.NativeNpcSquelched = NativeNpcPresence.NpcSquelched;
+        match.NativeNpcUserUI = SendNpcUserUI;
+        // START taunt playback is not reliably exposed by client state; qualification may override the default.
+        match.NativeNpcStartingTaunt = () => match.PresentationSettings.NativeStartingTaunt;
+        match.NativeHumanInputReady = () => NativeTestControl.TurnInputReady(match);
+        match.NativeHumanTimerReady = () => NativeTestControl.TurnInputReady(match, forTimer: true);
+        match.TimerTrace = line => log.LogInfo("PLAYER_TURN_TIMER " + line);
+        match.NativePresentationInputReady = NpcPresentationInputReady;
+        match.BotTrace = line => log.LogInfo("LOCAL_AI " + line);
+        match.ChoiceTrace = line => log.LogInfo("LOCAL_CHOICE_OPEN " + line);
+        match.EventTrace = line => log.LogInfo("MATCH_EVENT " + line);
+#if !SOLOSTONE_RELEASE
+        match.NativeEntityDiagnostic = NativeTestControl.ClientEntityDiagnostic;
+#endif
+    }
+
+    private static void QueueLocalGame(bool nativeMatchmaking, DebugScenario scenario, int missionId, int missionBoard)
+    {
+        StartMatch = match.Start;
+#if STANDARD_PROOF
+        match.TradeTrace = recordJson => File.AppendAllText(reports + @"\trade-proof.jsonl",
+            StandardProofNative.Envelope(runId,matchId,NativeTestControl.AttributeTrace(recordJson))+"\n");
+        Option = (id,index,target,sub,position) => {
+            match.TraceInputNonce=NativeTestControl.SemanticNonce ?? StandardProofNative.InputNonce(reports + @"\input.json",runId,matchId,id,index);
+            match.SendOption(id,index,target,sub,position);
+        };
+#else
+        Option = match.SendOption;
+#endif
+        Choices = match.SendChoices;
+        Concede = match.Concede;
+        requested = false;
+        npcGameplaySeen = false;
+        boardLoadRetried = false;
+        staged = true;
+        localConnected = true;
+        stageTime = Time.realtimeSinceStartup;
+        // Last refusal point before the stage jobs queue: the file is retired here so it can never apply to a second match.
+        scenario?.Consume(message => log.LogInfo(message));
+        var manager = GameMgr.Get();
+        Set(manager, "m_gameType", GameType.GT_VS_AI);
+        Set(manager, "m_nextGameType", GameType.GT_VS_AI);
+        Set(manager, "m_nextFormatType", missionId == 0 ? NativeUIProbe.LocalDeckFormat : FormatType.FT_WILD);
+        Set(manager, "m_nextMissionId", missionId);
+        if (nativeMatchmaking) NativeMatchmaking.Begin();
+        var transition = new JobDefinition("Offline.StageGame", StageGame(match, missionBoard), Array.Empty<IJobDependency>());
+        if (SplashScreen.Get() != null)
+            Processor.QueueJob("Offline.HideSplash", SplashScreen.Get().Hide(transition), Array.Empty<IJobDependency>());
+        else Processor.QueueJob(transition);
+    }
+
+    private static void ClearLocalStage()
+    {
+        match?.StopNpc();
+        playtestRecord?.Dispose();
+        playtestRecord = null;
+        match = null;
+        matchId = null;
+        staged = false;
+        localConnected = false;
+        StartMatch = null; Option = null; Choices = null; Concede = null;
+        requested = false;
+        npcGameplaySeen = false;
     }
 
     private static Dictionary<string, object> EncounterFacts(string opponentDeck)
@@ -938,9 +961,19 @@ internal static class ClientBridge
     private static bool SkipLocal() { return !staged; }
     private static bool SkipAccountPrompt() { return false; }
     private static bool AllowIdleThinkEmotes() { return OfflineProbe.IdleThinkEmotes.Value; }
-    private static bool SkipLocalRewards(EndGameScreen __instance) => !NativeResultsUI.OwnsScreen(__instance);
-    private static bool ShowLocalResult(EndGameScreen __instance)
+    private static bool SkipLocalRewards(EndGameScreen __instance) => !OwnsAdventureMatch && !NativeResultsUI.OwnsScreen(__instance);
+    private static bool ShowLocalResult(EndGameScreen __instance, ref bool ___m_netCacheReady,
+        ref bool ___m_achievesReady, ref bool ___m_rewardsLoaded, ref bool ___m_shouldShowRankChange,
+        ref bool ___m_shouldShowRankedCardBackProgress, ref bool ___m_shouldShowRewardXpGains)
     {
+        if (OwnsAdventureMatch)
+        {
+            if (match?.Game?.State != SabberStoneCore.Enums.State.COMPLETE) return false;
+            // ShowStandardFlowIfReady waits for these service callbacks before it exposes Continue.
+            ___m_netCacheReady = ___m_achievesReady = ___m_rewardsLoaded = true;
+            ___m_shouldShowRankChange = ___m_shouldShowRankedCardBackProgress = ___m_shouldShowRewardXpGains = false;
+            return true;
+        }
         if (!OwnsLocalPostMatch && !NativeResultsUI.OwnsScreen(__instance)) return true;
         if (match?.Game?.State != SabberStoneCore.Enums.State.COMPLETE) return false;
         LocalLadder.NativeFinished();
@@ -1006,12 +1039,13 @@ internal static class ClientBridge
     public static void ConcedeLocal()
     {
         if (match?.Game == null || match.Game.State == SabberStoneCore.Enums.State.COMPLETE) return;
-        LocalLadder.MarkConcede();
+        if (!OwnsAdventureMatch) LocalLadder.MarkConcede();
         Concede?.Invoke();
     }
 
-    private static IEnumerator<IAsyncJobResult> StageGame()
+    private static IEnumerator<IAsyncJobResult> StageGame(NativeMatch pendingMatch, int missionBoard)
     {
+        if (!ReferenceEquals(match, pendingMatch)) yield break;
         int board = 1;
         int forced = 0, selected = 0;
         try
@@ -1046,6 +1080,7 @@ internal static class ClientBridge
             board = BoardChoice.ForPlayer(match.Seed, present, forced, selected, profile?.OwnedBoards ?? new int[0]);
         }
         catch (Exception error) { log.LogWarning("boards: fallback=1 " + error); }
+        if (missionBoard > 0) board = missionBoard;
         log.LogInfo("board: id=" + board + " seed=" + match.Seed + " forced=" + forced + " selected=" + selected);
         Send(16, new PegasusGame.GameSetup {
             Board = board, BoardLayout = 0, MaxSecretZoneSizePerPlayer = 5,
@@ -1181,12 +1216,19 @@ internal static class ClientBridge
             catch (Exception error)
             {
                 log.LogError("LOCAL_MATCH_START_FAILED " + error);
-                LocalLadder.CancelUnstartedStage(message => log.LogError(message));
-                Application.Quit(45);
+                if (OwnsAdventureMatch) InterruptAdventure();
+                else
+                {
+                    LocalLadder.CancelUnstartedStage(message => log.LogError(message));
+                    Application.Quit(45);
+                }
                 return false;
             }
-            LocalLadder.EngineStarted(message => log.LogError(message), match.FirstPlayer);
-            LocalLadder.NativeStarted();
+            if (!OwnsAdventureMatch)
+            {
+                LocalLadder.EngineStarted(message => log.LogError(message), match.FirstPlayer);
+                LocalLadder.NativeStarted();
+            }
         }
         return false;
     }

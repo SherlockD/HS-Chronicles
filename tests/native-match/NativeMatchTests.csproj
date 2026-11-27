@@ -45,6 +45,7 @@
     <Compile Include="../../plugin/LocalBot.cs" Link="LocalBot.cs" />
     <Compile Include="../../plugin/LocalCrafting.cs" Link="LocalCrafting.cs" />
     <Compile Include="../../plugin/LocalProfile.cs" Link="LocalProfile.cs" />
+    <Compile Include="../../plugin/LocalProfileAdventures.cs" Link="LocalProfileAdventures.cs" />
     <Compile Include="../../plugin/LocalRematch.cs" Link="LocalRematch.cs" />
     <Compile Include="../../plugin/LocalAchievements.cs" Link="LocalAchievements.cs" />
     <Compile Include="../../plugin/LocalProfileAchievements.cs" Link="LocalProfileAchievements.cs" />

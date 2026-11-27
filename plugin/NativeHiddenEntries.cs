@@ -20,7 +20,7 @@ internal static class NativeHiddenEntries
 
     internal static readonly Entry[] Entries = {
         new Entry("home.battlegrounds", "Box.m_BattleGroundsButton", "Online mode; face relabelled Fan-made modes (community mods, modder toolkit), later", "Fan-made modes (community mods, modder toolkit), later; Battlegrounds #50 unscheduled", "Box.OnBattleGroundsButtonPressed|Box.PlayBattlegroundsMode|Box.ShowBattlegroundsPreviewVideo|Box.StartBattlegroundsTutorial|Hub.HandleBaconButtonPressed", buttons: "BACON|BACON_PREVIEW", disabledMode: true),
-        new Entry("home.modes", "Box.m_GameModesButton", "Twist, Duels, Adventures, Mercenaries and Books unsupported", "#50; #8 separate roguelike", "Box.OnModesButtonPressed|Hub.HandleGameModesButtonPressed", buttons: "GAME_MODES|PVP_DUNGEON_RUN|MERCENARIES", disabledMode: true),
+        new Entry("home.modes", "Box.m_GameModesButton", "Retail mode routes stay gated; the Modes button opens local Adventures", "#50", "Box.OnModesButtonPressed|Hub.HandleGameModesButtonPressed", buttons: "GAME_MODES|PVP_DUNGEON_RUN|MERCENARIES", disabledMode: true),
         new Entry("home.brawl", "Box.m_prtbButtonWidget|Box.m_ribbonButtons.m_prtbRibbon|Box.m_ribbonButtons.m_prtbButtonWidget|PRTBButton.$self", "No local Tavern Brawl", "#21", "Box.OnPRTBButtonPressed|Box.OnTavernBrawlButtonPressed|PRTBButton.GoToTavernBrawl", buttons: "TAVERN_BRAWL"),
         new Entry("home.journal", "Box.m_QuestLogButton|Box.m_journalButtonWidget|Hearthstone.Progression.JournalButton.$self", "Retail quests, achievements and reward track", "#2; #3", "Hearthstone.Progression.JournalButton.ShowJournal", buttons: "JOURNAL|QUEST_LOG", hideSiblingLabel: true),
         new Entry("home.store", "Box.m_StoreButton|StoreButton.$self", "Retail money store; local shop is separate", "#4 local shop only; #50 retail stays hidden", "Box.OnStoreButtonReleased|StoreManager.StartGeneralTransaction", buttons: "STORE", hideSiblingLabel: true),
@@ -152,11 +152,17 @@ internal static class NativeHiddenEntries
     private static bool Applies(Entry entry) => (entry.Id != "home.store" || !NativeShop.HomeStoreReady)
         && (!entry.OutsideMatch || !SceneMgr.IsInitialized() || SceneMgr.Get().GetMode() != SceneMgr.Mode.GAMEPLAY);
     // The drawer Journal slot stays visible as SoloStone's Feats entry; its retail routes and handlers stay blocked.
-    private static bool Hides(Entry entry) => entry.Id != "home.journal" || !NativeAchievements.HomeJournalReady;
+    private static bool Hides(Entry entry) => (entry.Id != "home.journal" || !NativeAchievements.HomeJournalReady)
+        && (entry.Id != "home.modes" || !NativeUIProbe.HomeModesReady);
     // True while the entry's policy is in force (its release-policy row exists and applies here).
     internal static bool Active(string id) => Entries.Any(entry => entry.Id == id && Applies(entry) && Hides(entry));
-    private static bool Block(MethodBase __originalMethod) =>
-        !blocked.TryGetValue(__originalMethod, out var entries) || !entries.Any(Applies);
+    private static bool Block(MethodBase __originalMethod)
+    {
+        if (!blocked.TryGetValue(__originalMethod, out var entries) || !entries.Any(Applies)) return true;
+        if (__originalMethod.DeclaringType == typeof(Box) && __originalMethod.Name == "OnModesButtonPressed")
+            NativeUIProbe.OpenLocalModes();
+        return false;
+    }
 
     private static bool GuardBoxRoute(Box.ButtonType __0, bool __1)
     {
@@ -170,6 +176,7 @@ internal static class NativeHiddenEntries
         {
             NativeHomeUI.HideJournalLabels(box, message => log?.LogInfo(message));
             NativeHomeUI.ApplyModePolicy(box, message => log?.LogInfo(message), Active);
+            if (NativeUIProbe.HomeModesReady) NativeHomeUI.EnableModes(box, NativeUIProbe.HomeModesLabel);
         }
         else if (__instance is Hearthstone.Progression.JournalButton)
             NativeHomeUI.HideJournalLabels(Box.Get(), message => log?.LogInfo(message));

@@ -12,6 +12,7 @@
     <Compile Include="../shared/UnityStandIns.cs" Link="UnityStandIns.cs" />
     <Compile Include="../shared/RepoRoot.cs" Link="RepoRoot.cs" />
     <Compile Include="../../plugin/LocalProfile.cs" Link="LocalProfile.cs" />
+    <Compile Include="../../plugin/LocalProfileAdventures.cs" Link="LocalProfileAdventures.cs" />
     <Compile Include="../../plugin/LocalAchievements.cs" Link="LocalAchievements.cs" />
     <Compile Include="../../plugin/LocalProfileAchievements.cs" Link="LocalProfileAchievements.cs" />
     <Compile Include="../../plugin/LocalProfileCheats.cs" />

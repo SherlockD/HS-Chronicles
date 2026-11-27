@@ -2,6 +2,14 @@ using System.Reflection;
 using System.Xml.Serialization;
 using SabberStoneCore.Model;
 
+if (args.Length == 0 || args.SequenceEqual(new[] { "--adventures-only" }))
+{
+    var adventureRoot = Directory.CreateTempSubdirectory("hs-adventures-");
+    try { AdventureProfileChecks.Run(adventureRoot.FullName); }
+    finally { adventureRoot.Delete(true); }
+    if (args.Length > 0) return;
+}
+
 if (args.Length == 2 && args[0] == "--deck-premium-owner-save")
 {
     DeckPremiumChecks.OwnerSave(args[1]);

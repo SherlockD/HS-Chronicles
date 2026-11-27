@@ -72,6 +72,7 @@ internal static class NativeFormatLock
 
     private static void StandardFormat(ref FormatType __0)
     {
+        if (NativeUIProbe.AtAdventurePicker && __0 == FormatType.FT_WILD) return;
         if (!NativeUIProbe.IsolatedLaunch || __0 == FormatType.FT_UNKNOWN || __0 == NativeUIProbe.LocalDeckFormat) return;
         log?.LogInfo("NATIVE_FORMAT options " + __0 + " kept " + NativeUIProbe.LocalDeckFormat);
         __0 = NativeUIProbe.LocalDeckFormat;
@@ -80,6 +81,11 @@ internal static class NativeFormatLock
     private static void StandardMode(ref VisualsFormatType __0)
     {
         if (!NativeUIProbe.IsolatedLaunch) return;
+        if (NativeUIProbe.AtAdventurePicker)
+        {
+            __0 = VisualsFormatType.VFT_WILD;
+            return;
+        }
         if (__0 != VisualsFormatType.VFT_STANDARD && __0 != VisualsFormatType.VFT_CASUAL)
         {
             log?.LogInfo("NATIVE_FORMAT mode " + __0 + " kept VFT_STANDARD");
@@ -119,7 +125,7 @@ internal static class NativeFormatLock
     // picker's ranked-intro reset in InitAssets on each load, Hub transitions, tutorials) follows the remembered mode.
     private static void RankedPlayMode(ref bool __0)
     {
-        if (!NativeUIProbe.IsolatedLaunch) return;
+        if (!NativeUIProbe.IsolatedLaunch || NativeUIProbe.AtAdventurePicker) return;
         bool requested = __0;
         __0 = NativeUIProjection.FollowRankedPlayMode(requested);
         if (__0 != requested) log?.LogInfo("NATIVE_FORMAT ranked-mode request " + requested + " kept " + __0);

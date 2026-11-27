@@ -324,20 +324,36 @@ internal static class NativeHomeUI
         button.SetEnabled(UIEventType.ROLLOUT, true);
     }
 
-    private static bool IsUnavailableMode(Box box, PegUIElement button) => box != null && button != null
+    internal static void EnableModes(Box box, string label)
+    {
+        var button = box?.m_GameModesButton;
+        if (button == null) return;
+        if (box.m_EmptyFourthButton != null && box.m_EmptyFourthButton.activeSelf)
+            box.m_EmptyFourthButton.SetActive(false);
+        if (!button.gameObject.activeSelf) button.gameObject.SetActive(true);
+        box.SetBoxButtonInteractions(true, button, true);
+        button.SetEnabled(UIEventType.PRESS, true);
+        button.SetEnabled(UIEventType.RELEASE, true);
+        button.SetEnabled(UIEventType.ROLLOVER, true);
+        button.SetEnabled(UIEventType.ROLLOUT, true);
+        if (button.GetText() != label) button.SetText(label);
+    }
+
+    private static bool HasLocalModeTooltip(Box box, PegUIElement button) => box != null && button != null
         && (button == box.m_BattleGroundsButton || button == box.m_GameModesButton);
 
-    internal static bool ShowModeTooltip(Box box, PegUIElement button)
+    internal static bool ShowModeTooltip(Box box, PegUIElement button, string localModesTooltip = null)
     {
-        if (!IsUnavailableMode(box, button)) return true;
+        if (!HasLocalModeTooltip(box, button)) return true;
+        string body = button == box.m_GameModesButton && localModesTooltip != null ? localModesTooltip : "Not done yet! In the backlog";
         if (box.IsInStateWithButtons())
-            button.GetComponent<TooltipZone>()?.ShowBoxTooltip(((BoxMenuButton)button).GetText(), "Not done yet! In the backlog");
+            button.GetComponent<TooltipZone>()?.ShowBoxTooltip(((BoxMenuButton)button).GetText(), body);
         return false;
     }
 
     internal static bool HideModeTooltip(Box box, PegUIElement button)
     {
-        if (!IsUnavailableMode(box, button)) return true;
+        if (!HasLocalModeTooltip(box, button)) return true;
         button.GetComponent<TooltipZone>()?.HideTooltip();
         return false;
     }

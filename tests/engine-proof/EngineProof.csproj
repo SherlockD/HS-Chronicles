@@ -14,6 +14,7 @@
     <DefineConstants>$(DefineConstants);SOLOSTONE_PREBUILT_ENGINE</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../plugin/adventures/AdventureEncounter.cs" />
     <Compile Include="../../plugin/NativeStallClock.cs" Link="NativeStallClock.cs" />
     <Compile Include="../../plugin/NativeHeraldText.cs" Link="NativeHeraldText.cs" />
     <Compile Include="../shared/GroupProofs.cs" Link="GroupProofs.cs" />
@@ -37,6 +38,7 @@
     <Compile Include="../../plugin/BotSearch.cs" Link="BotSearch.cs" />
     <Compile Include="../../plugin/BotDriver.cs" Link="BotDriver.cs" />
     <Compile Include="../../plugin/LocalProfile.cs" Link="LocalProfile.cs" />
+    <Compile Include="../../plugin/LocalProfileAdventures.cs" Link="LocalProfileAdventures.cs" />
     <Compile Include="../../plugin/LocalAchievements.cs" Link="LocalAchievements.cs" />
     <Compile Include="../../plugin/LocalProfileAchievements.cs" Link="LocalProfileAchievements.cs" />
     <Compile Include="../../plugin/LocalAchievementCollector.cs" Link="LocalAchievementCollector.cs" />

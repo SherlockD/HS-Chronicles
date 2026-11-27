@@ -593,7 +593,7 @@ public sealed class LocalShop
         .Concat(Cards.All.Where(card => IsActiveExtraCard(card.Id) && IsStandardCard(card)))
 #endif
         ;
-    internal static void ValidateDeck(string name, string hero, IEnumerable<string> ids, IEnumerable<LocalSideboard> sideboards, bool complete, bool stored = false, bool standardOnly = true) {
+    internal static LocalDeck ValidateDeck(string name, string hero, IEnumerable<string> ids, IEnumerable<LocalSideboard> sideboards, bool complete, bool stored = false, bool standardOnly = true, bool allowWildSideboards = false) {
         var cards = ids?.ToArray() ?? throw new InvalidOperationException("Missing deck cards.");
         if (string.IsNullOrWhiteSpace(name) || name.Length > 32 || name.Any(char.IsControl) || !LocalCoreProgression.Heroes.Contains(hero)
             || cards.Length > (complete ? LocalDecks.DeckSize(cards) : LocalDecks.DraftLimit(cards)) || (complete && cards.Length != LocalDecks.DeckSize(cards))
@@ -604,7 +604,7 @@ public sealed class LocalShop
             || cards.Any(id => (standardOnly && !IsStandardCard(Cards.FromId(id))) || !LocalDecks.IsAllowedInDeck(Cards.FromId(id), LocalDecks.HeroClass(hero))))
             throw new InvalidOperationException((standardOnly ? "Invalid Standard recipe deck: " : "Invalid local deck: ") + name);
         LocalDecks.ValidateRunes(cards.Select(Cards.FromId), LocalDecks.HeroClass(hero));
-        new LocalDeck(name, hero, cards).WithSideboards(sideboards, complete);
+        return new LocalDeck(name, hero, cards).WithSideboards(sideboards, complete, allowInactive: allowWildSideboards);
     }
     private void Validate() {
         if (catalog == null || catalog.Version != 1 || catalog.Products == null || catalog.Products.Count == 0
@@ -1031,20 +1031,28 @@ public sealed partial class LocalProfile
     private static bool NeedsExpandedDeckCatalog(IEnumerable<string> ids) {
         return ids.Any(id => KnownLedgerCard(id) && !LocalDecks.IsCustomCard(id));
     }
-    internal static LocalDeck LedgerDeck(string name, string hero, IEnumerable<string> ids, IEnumerable<LocalSideboard> sideboards, bool complete) {
+    internal static LocalDeck LedgerDeck(string name, string hero, IEnumerable<string> ids, IEnumerable<LocalSideboard> sideboards, bool complete,
+        bool allowWildSideboards = false) {
         var cards = ids?.ToArray() ?? throw new ArgumentNullException(nameof(ids));
-        if (!NeedsExpandedDeckCatalog(cards)) return (complete ? LocalDecks.Custom(name, hero, cards) : LocalDecks.Draft(name, hero, cards)).WithSideboards(sideboards, complete);
-        LocalShop.ValidateDeck(name, hero, cards, sideboards, complete, standardOnly: false);
-        return new LocalDeck(name, hero, cards).WithSideboards(sideboards, complete);
+        var boards = (sideboards ?? Enumerable.Empty<LocalSideboard>()).ToArray();
+        if (!complete && boards.All(board => board?.Cards != null && board.Cards.All(DisplayableDeckCard)))
+            allowWildSideboards = true;
+        if (!NeedsExpandedDeckCatalog(cards)) return (complete ? LocalDecks.Custom(name, hero, cards) : LocalDecks.Draft(name, hero, cards))
+            .WithSideboards(boards, complete, allowInactive: allowWildSideboards);
+        return LocalShop.ValidateDeck(name, hero, cards, boards, complete, standardOnly: false, allowWildSideboards: allowWildSideboards);
     }
     // The one card universe of a complete personal deck: deck completeness, the start checks and the match itself
     // all use it, so a deck the builder accepts can start (LocalDecks.Custom alone misses pack cards such as CATA_485).
-    internal static LocalDeck PlayableDeck(string name, string hero, IEnumerable<string> ids, IEnumerable<LocalSideboard> sideboards) {
+    internal static LocalDeck PlayableDeck(string name, string hero, IEnumerable<string> ids, IEnumerable<LocalSideboard> sideboards, bool adventure = false) {
         // The expanded ledger path accepts every stored hero; a match needs an implemented one, as Custom requires.
         if (!LocalDecks.PlayerHeroes.Contains(hero)) throw new InvalidOperationException("Unsupported local hero.");
-        return LedgerDeck(name, hero, ids, sideboards, true);
+        var deck = LedgerDeck(name, hero, ids, sideboards, true, allowWildSideboards: adventure);
+        if (adventure && deck.CardIds.Concat(deck.Sideboards.Values.SelectMany(board => board)).Any(id => Cards.FromId(id)?.Implemented != true))
+            throw new InvalidOperationException("The adventure deck contains an unsupported card.");
+        return deck;
     }
     private static readonly Lazy<EngineCard[]> ledgerCards = new Lazy<EngineCard[]>(() => LocalCardCatalog.Current
+        .Concat(Cards.All.Where(card => card.Id == LocalAdventureReward.HauntedCreeper && card.Collectible))
         .Concat(LocalShop.StandardCollectionCards)
 #if ENGINE_SOURCE
         // Fabled companions are deck cards outside the collectible pack pool.
@@ -1132,8 +1140,10 @@ public sealed partial class LocalProfile
             if (entry.Premium != 0 && !IsCollectibleCard(entry.Id)) continue;
             // Extras are copies beyond today's playset that lifetime acquisition does not explain (an epic pair
             // acquired before a legendary correction is not an extra).
-            if (entry.Count - (entry.Premium == 0 ? 0 : ProgressionGrantedCount(p, entry.Id, entry.Premium))
-                <= Math.Max(Playset(entry.Id), entry.Acquired)) continue;
+            int limit = Math.Max(Playset(entry.Id), entry.Acquired);
+            if (entry.Premium == 0 && p.Adventures?.Reward?.CardId == entry.Id)
+                limit = Math.Max(limit, p.Adventures.Reward.CountBefore + p.Adventures.Reward.Copies);
+            if (entry.Count - (entry.Premium == 0 ? 0 : ProgressionGrantedCount(p, entry.Id, entry.Premium)) <= limit) continue;
             var card = Cards.FromId(entry.Id);
             // Legacy/Core cards never gained extras before V10 and cannot gain them now.
             string type = CardPackType(card.Id);

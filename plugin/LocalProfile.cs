@@ -244,6 +244,7 @@ public sealed class LocalEraTransition
 
 public sealed class LocalProfileData
 {
+    public LocalAdventureState Adventures;
     public string CurrentEraId;
     public bool ShouldSerializeCurrentEraId() => CurrentEraId != null;
     public ArenaRun ArenaRun;
@@ -474,7 +475,7 @@ public sealed partial class LocalProfile : IDisposable
     // V16 (#87): Classic/Basic cards are Wild. The upgrade grants owned Classic cards' Core reprints, moves saved decks onto
     // them and stamps each deck's Format; decks still holding Wild cards stay as they are and cannot be queued until edited.
     private const int ClassicMigrationVersion = 16;
-    private const int CurrentVersion = 17;
+    private const int CurrentVersion = 18;
     internal const int SaveVersion = CurrentVersion;
     internal const string StandardFormat = "Standard";
     // Personal decks only; loaners (NativeUIProjection.PlayerLoanerCapacity) sit above this cap. Raising it never
@@ -639,7 +640,7 @@ public sealed partial class LocalProfile : IDisposable
     internal static LocalProfile OpenSnapshot(string path)
     {
         var profile = new LocalProfile(path, true);
-        if (profile.Pending == null) return profile;
+        if (profile.Pending == null && profile.PendingAdventureAttempt == null) return profile;
         profile.Dispose();
         throw new InvalidOperationException("Snapshot has a pending match; refusing automatic recovery.");
     }
@@ -647,7 +648,7 @@ public sealed partial class LocalProfile : IDisposable
 
     // Versions the constructor loads (older ones are upgraded in place). The startup preflight shares this so the two cannot drift.
     internal static bool IsSupportedVersion(int version) =>
-        version == 13 || version == 14 || version == 15 || version == ClassicMigrationVersion || version == CurrentVersion;
+        version >= 13 && version <= CurrentVersion;
 
     public LocalProfile(string path) : this(path, false) { }
 
@@ -703,6 +704,8 @@ public sealed partial class LocalProfile : IDisposable
                             .Any(match => match.Pet != null || match.PetXpBefore.HasValue || match.PetXpAfter.HasValue))
                         throw new InvalidOperationException("V13 cannot contain pet state.");
                 }
+                if (upgrade && loaded.Adventures != null)
+                    throw new InvalidOperationException("Legacy profiles cannot contain adventure progress.");
                 if (upgrade) loaded.Version = CurrentVersion;
                 var classicMigration = fromVersion < ClassicMigrationVersion ? MigrateClassicToV16(loaded) : Array.Empty<string>();
                 ValidateV14(loaded, profileOptions.AllCosmetics, profileOptions.LegendRating, profileOptions.AllDecks);
@@ -765,6 +768,13 @@ public sealed partial class LocalProfile : IDisposable
     private LocalMatchRecord Begin(string deck, string opponent, int seed, string npcId, string npcDeckId, double? npcRating,
         bool unstarted, LocalAchievementPendingContext achievementContext, string mode, LocalPlacementOpponent placementOpponent = null)
     {
+        lock (matchGate)
+            return BeginMatch(deck, opponent, seed, npcId, npcDeckId, npcRating, unstarted, achievementContext, mode, placementOpponent);
+    }
+
+    private LocalMatchRecord BeginMatch(string deck, string opponent, int seed, string npcId, string npcDeckId, double? npcRating,
+        bool unstarted, LocalAchievementPendingContext achievementContext, string mode, LocalPlacementOpponent placementOpponent)
+    {
         // One-shot: the armed test pacing applies to this Begin only, whether or not it succeeds.
         int? pacing = armedPetPacing; armedPetPacing = null;
         bool debugScenario = armedDebugScenario; armedDebugScenario = false;
@@ -774,7 +784,7 @@ public sealed partial class LocalProfile : IDisposable
         if (npcDifficulty != null && !NpcDifficultyIds.IsSelectable(npcDifficulty)) throw new ArgumentException("Invalid NPC difficulty.");
         if (!ValidNpcFields(npcId, npcDeckId, npcRating)) throw new ArgumentException("Invalid NPC encounter.");
         if (mode != null && !CasualRules.IsCasual(mode) && !ArenaRules.IsArena(mode)) throw new ArgumentException("Unknown match mode.");
-        if (data.Pending != null) throw new InvalidOperationException("A local match is already pending.");
+        if (data.Pending != null || data.Adventures?.Pending != null) throw new InvalidOperationException("A local match is already pending.");
         if (data.PendingRewardPresentationId != null)
             throw new InvalidOperationException("The previous local reward must be presented first.");
         if (!ValidName(deck, 64) || !ValidName(opponent, 64) || seed < 0)
@@ -981,6 +991,13 @@ public sealed partial class LocalProfile : IDisposable
 
     public void RecoverInterrupted()
     {
+        lock (matchGate) {
+            if (data.Adventures?.Pending != null) {
+                SettleAdventureAttempt(data.Adventures.Pending.Id, "Interrupted");
+                AdventureRecovered = true;
+                return;
+            }
+        }
         if (data.Pending == null) return;
         if (data.Pending.DebugScenario)
         {
@@ -1423,13 +1440,17 @@ public sealed partial class LocalProfile : IDisposable
         return "The saved deck is incomplete. Acquire missing cards before playing.";
     }
 
-    public bool IsDeckComplete(long id)
+    public bool IsDeckComplete(long id) => IsDeckComplete(id, adventure: false);
+
+    public bool IsDeckComplete(long id, bool adventure)
     {
         var deck = GetDraft(id);
         if (deck == null) return false;
-        if ((deck.Format ?? StandardFormat) != StandardFormat || WildCards(id).Count != 0) return false;
+        string format = deck.Format ?? StandardFormat;
+        if (format != StandardFormat && !(adventure && format == "Wild")) return false;
+        if (!adventure && WildCards(id).Count != 0) return false;
         try {
-            PlayableDeck(deck.Name, deck.Hero, deck.Cards, deck.Sideboards);
+            PlayableDeck(deck.Name, deck.Hero, deck.Cards, deck.Sideboards, adventure);
             // Retail CollectionDeck.CanCardBeAddedAsOwned (254477): a sideboard copy is owned only beyond the main deck's
             // copies, for every sideboard (Beatrix and Underbelly contraband alike), so ownership counts both together.
             ValidateDeckOwnership(deck.CardEntries.Concat(deck.Sideboards.SelectMany(board => board.CardEntries)), true);
@@ -1851,8 +1872,14 @@ public sealed partial class LocalProfile : IDisposable
     {
         return profile.CustomDecks.Where(deck => LocalDecks.PlayerHeroes.Contains(deck.Hero)
             && deck.Cards.All(id => LedgerCardIndex.ContainsKey(id) || LocalDecks.IsCustomCard(id))
-            && deck.Sideboards.SelectMany(row => row.Cards).All(id => LocalCardCatalog.InActiveMeta(SabberStoneCore.Model.Cards.FromId(id))))
+            && deck.Sideboards.SelectMany(row => row.Cards).All(DisplayableDeckCard))
             .OrderBy(deck => deck.SortOrder).ThenBy(deck => deck.Id).Take(MaximumCustomDecks);
+    }
+
+    private static bool DisplayableDeckCard(string id)
+    {
+        var card = SabberStoneCore.Model.Cards.FromId(id);
+        return card != null && (LocalCardCatalog.InActiveMeta(card) || card.Implemented && KnownLedgerCard(id));
     }
 
     private static bool GrantCoreUnlocks(LocalProfileData profile)
@@ -1941,6 +1968,7 @@ public sealed partial class LocalProfile : IDisposable
         } };
 
     private LocalProfileData Snapshot() => new LocalProfileData {
+        Adventures = data.Adventures?.Copy(),
         Version = CurrentVersion, CurrentEraId = data.CurrentEraId, GrindTier = data.GrindTier, NpcDifficulty = data.NpcDifficulty,
         UnlockedEraId = data.UnlockedEraId,
         EraTransitions = data.EraTransitions.Select(transition => new LocalEraTransition {
@@ -2140,6 +2168,7 @@ public sealed partial class LocalProfile : IDisposable
 
     private static void ValidateV14(LocalProfileData profile, bool allCosmetics = false, double legendRating = 0, bool allDecks = false)
     {
+        ValidateAdventures(profile);
         GrindTiers.Find(profile?.GrindTier);
         if (profile?.NpcDifficulty != null && !NpcDifficultyIds.IsSelectable(profile.NpcDifficulty))
             throw new InvalidOperationException("Invalid NPC difficulty.");
@@ -2272,7 +2301,8 @@ public sealed partial class LocalProfile : IDisposable
                 if (saved.Cards == null || saved.Cards.Count > LocalDecks.DraftLimit(saved.Cards))
                     throw new InvalidOperationException("Local draft exceeds its deck-size limit.");
                 if (profile.Version >= 10 && NeedsExpandedDeckCatalog(saved.Cards))
-                    LocalShop.ValidateDeck(saved.Name, saved.Hero, saved.Cards.Where(id => !LocalCardCatalog.IsCore(id)), saved.Sideboards, false, true, standardOnly: false);
+                    LocalShop.ValidateDeck(saved.Name, saved.Hero, saved.Cards.Where(id => !LocalCardCatalog.IsCore(id)), saved.Sideboards, false, true,
+                        standardOnly: false, allowWildSideboards: true);
                 else LocalDecks.ValidateStoredDraft(saved.Name, saved.Hero, saved.Cards);
                 new LocalDeck(saved.Name, saved.Hero, saved.Cards.ToArray()).WithSideboards(saved.Sideboards, allowInactive: true);
                 if (profile.Version < 10) ValidateSideboardOwnership(saved.Sideboards, OwnedCollection(profile));
@@ -2921,8 +2951,10 @@ public sealed partial class LocalProfile : IDisposable
 
     public void Dispose()
     {
-        try { FlushSeen(); } catch { } // Best effort: a lost write only brings NEW markers back.
-        lease.Dispose();
+        lock (matchGate) {
+            try { FlushSeen(); } catch { } // Best effort: a lost write only brings NEW markers back.
+            lease.Dispose();
+        }
     }
 }
 

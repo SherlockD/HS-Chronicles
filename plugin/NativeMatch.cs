@@ -541,6 +541,29 @@ public sealed class NativeMatch
         this.startingStars = startingStars;
     }
 
+    // Boss decks may contain non-collectible cards. The encounter catalog admits these
+    // separately from player deckbuilding rules; the ordinary bot still chooses legal actions.
+    internal NativeMatch(Action<int, IProtoBuf> send, LocalDeck player, EngineCard boss,
+        IReadOnlyList<EngineCard> cards, int scenarioId, int seed, IEnumerable<LocalDeckCard> entries) : this(send)
+    {
+        playerDeck = player ?? throw new ArgumentNullException(nameof(player));
+        playerHero = ResolveHero(player.Hero);
+        playerCards = player.Build();
+        premiumDeckCards = PremiumEntries(playerCards.Select(card => card.Id), entries);
+        if (boss?.Type != CardType.HERO || cards == null || cards.Count == 0 || cards.Any(card => card == null))
+            throw new ArgumentException("An adventure requires an admitted boss and deck.");
+        opponentDeck = new LocalDeck(scenarioId, boss, cards);
+        this.seed = seed;
+    }
+
+    internal LocalAdventureResult SettleAdventure(LocalProfile profile, string attemptId)
+    {
+        if (opponentDeck?.IsEncounter != true || attemptId == null || MatchId != attemptId || Game?.State != State.COMPLETE)
+            throw new InvalidOperationException("The adventure match has no terminal result for this attempt.");
+        return profile.SettleAdventureAttempt(attemptId,
+            HumanConceded ? "Conceded" : MatchOutcome.From(Game, false).Result);
+    }
+
     internal NativeMatch(Action<int, IProtoBuf> send, EngineCard fixtureHero, IEnumerable<EngineCard> fixtureCards, int fixtureSeed) : this(send)
     {
         if (fixtureHero == null || fixtureHero.Type != CardType.HERO)
@@ -815,9 +838,8 @@ public sealed class NativeMatch
             History = true,
 #if ENGINE_SOURCE
             EnableCorpses = true,
-            // The live match is FT_WILD (the client shows the format), but random effects play the Standard pool.
-            // The pool policy is set explicitly; the Wild mode will set it from the deck's format.
-            PoolFormat = SabberStoneCore.Config.GenerationFormat.Standard,
+            PoolFormat = opponentDeck?.IsEncounter == true ? SabberStoneCore.Config.GenerationFormat.Wild
+                : SabberStoneCore.Config.GenerationFormat.Standard,
             Player1Sideboards = playerDeck?.Sideboards,
             Player2Sideboards = opponentDeck?.Sideboards,
 #endif

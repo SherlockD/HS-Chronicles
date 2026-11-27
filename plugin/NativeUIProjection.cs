@@ -259,8 +259,9 @@ internal static class NativeUIProjection
     internal static List<string> NativeCollectiblePool(IEnumerable<string> craftable, IEnumerable<LocalCardCount> owned = null) => Supported.Concat(CosmeticHeroPool)
         .Concat(craftable ?? Enumerable.Empty<string>()).Concat(OwnedGrantOnlyIds(owned))
         .Distinct(StringComparer.Ordinal).OrderBy(id => id).ToList();
-    private static bool AdmittedGrantOnly(string id) => LocalWelcomeGift.HistoricalCardIds.Contains(id)
-        && LocalProfile.KnownLedgerCard(id) && LocalCardCatalog.InActiveMeta(SabberStoneCore.Model.Cards.FromId(id));
+    private static bool AdmittedGrantOnly(string id) => LocalProfile.KnownLedgerCard(id)
+        && (id == LocalAdventureReward.HauntedCreeper || LocalWelcomeGift.HistoricalCardIds.Contains(id)
+            && LocalCardCatalog.InActiveMeta(SabberStoneCore.Model.Cards.FromId(id)));
     private static IEnumerable<string> OwnedGrantOnlyIds(IEnumerable<LocalCardCount> owned) =>
         (owned ?? Enumerable.Empty<LocalCardCount>()).Where(card => card.Count > 0 && AdmittedGrantOnly(card.Id)).Select(card => card.Id);
     // Deck-slot collectibility: native EvaluateSlot checks it before ownership, so narrowing it turns missing cards
@@ -811,7 +812,7 @@ internal static class NativeUIProjection
     // Every profile/deck check that can refuse a local match. LocalLadder runs it, and builds the native match,
     // before LocalProfile.Begin commits Pending, so a refused start never leaves a Pending behind.
     // Returns the saved per-copy entries of a personal deck (presentation only), null for a loaner.
-    internal static IReadOnlyList<LocalDeckCard> ValidateStart(LocalProfile profile, string selected, LocalDeck resolved, bool personal)
+    internal static IReadOnlyList<LocalDeckCard> ValidateStart(LocalProfile profile, string selected, LocalDeck resolved, bool personal, bool adventure = false)
     {
         if (profile == null) throw new ArgumentNullException(nameof(profile));
         if (resolved == null) throw new InvalidOperationException("Selected deck is missing.");
@@ -828,11 +829,22 @@ internal static class NativeUIProjection
         if (!long.TryParse(selected.Substring("custom:".Length), NumberStyles.None, CultureInfo.InvariantCulture, out long nativeId))
             throw new InvalidOperationException("Custom deck identity is invalid.");
         LocalCustomDeck saved = profile.GetDraft(nativeId) ?? throw new InvalidOperationException("Custom deck no longer exists.");
-        if (!profile.IsDeckComplete(nativeId))
-            throw new InvalidOperationException(profile.NotPlayableReason(nativeId));
+        if (!profile.IsDeckComplete(nativeId, adventure))
+            throw new InvalidOperationException(adventure ? "The adventure deck is incomplete or unsupported." : profile.NotPlayableReason(nativeId));
         ValidateCustomStart(profile, nativeId, saved, resolved);
-        resolved.WithSideboards(saved.Sideboards, true).Build();
-        ValidateMatchDeckBinding(selected, resolved);
+        if (adventure)
+        {
+            if (saved.Sideboards.Count != resolved.Sideboards.Count || saved.Sideboards.Any(board =>
+                !resolved.Sideboards.TryGetValue(board.Source, out var cards)
+                || !board.Cards.OrderBy(id => id, StringComparer.Ordinal).SequenceEqual(cards.OrderBy(id => id, StringComparer.Ordinal))))
+                throw new InvalidOperationException("Adventure sideboards differ from the selected deck.");
+            resolved.Build();
+        }
+        else
+        {
+            resolved.WithSideboards(saved.Sideboards, true).Build();
+            ValidateMatchDeckBinding(selected, resolved);
+        }
         return saved.CardEntries;
     }
     internal static void ValidateMatchDeckBinding(string key, LocalDeck personalSnapshot)

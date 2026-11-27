@@ -403,17 +403,38 @@ internal static class StartupSaveChecks
             && installed.Eras[39].Id == "reign-of-the-black-empire", "complete chronological campaign catalog");
         Check(installed.Next(classic).Id == naxxramas && installed.Next(naxxramas).Id == gnomes
             && ProfileCatalog.EraName(classic) == installed.Find(classic).Title, "catalog orders and names epochs");
+        var installedAdventure = installed.FindAdventure(naxxramas);
+        Check(installedAdventure?.EraId == naxxramas && installedAdventure.Title == installed.Find(naxxramas).Title
+            && installedAdventure.EnglishTitle == "Curse of Naxxramas"
+            && installed.Find(naxxramas).Adventures.Single() == installedAdventure
+            && installed.Eras.Where(era => era.Id != naxxramas).All(era => era.Adventures.Count == 0),
+            "Naxxramas is the only installed adventure");
+        Check(installed.Find(naxxramas).Content == null && installed.FindAdventure("unknown") == null,
+            "declaring an adventure does not install playable era content");
 
         const string content = "<Content rules='rules-v1' cards='cards-v1' collection='collection-v1' economy='economy-v1' heroes='heroes-v1' opponents='opponents-v1' />";
+        const string adventure = "<Adventure id='trial' title='Trial' />";
+        string contentWithAdventure = content.Replace("/>", "><Adventure id='trial' /></Content>");
         string first = "<Era id='classic-2014' title='First' month='2014-06'>" + content + "</Era>";
-        string update = "<Update id='test-update' month='2014-09'>" + content.Replace("rules-v1", "rules-v2") + "</Update>";
-        string next = "<Era id='curse-of-naxxramas' title='Next' month='2014-07'>" + content + update + "</Era>";
+        string update = "<Update id='test-update' month='2014-09'>" + contentWithAdventure.Replace("rules-v1", "rules-v2") + "</Update>";
+        const string nextEra = "<Era id='curse-of-naxxramas' title='Next' month='2014-07'>";
+        string next = nextEra + adventure + contentWithAdventure + update + "</Era>";
         string later = "<Era id='goblins-vs-gnomes' title='Later' month='2014-12' />";
         var catalog = ReadEraCatalog(first + next + later);
+        var catalogWithoutNextContent = ReadEraCatalog(first + nextEra + adventure + "</Era>" + later);
         Check(catalog.Next(classic).Updates.Single().Content.RulesId == "rules-v2"
             && catalog.Next(naxxramas).Id == gnomes, "updates have their own rules without a new era");
+        Check(catalog.FindAdventure("trial")?.EraId == naxxramas && catalog.FindAdventure("trial").EnglishTitle == "Trial"
+            && catalog.Find(naxxramas).Content.AdventureIds.Single() == "trial"
+            && catalog.Find(naxxramas).Updates.Single().Content.AdventureIds.Single() == "trial",
+            "era content and updates link to the same adventure declaration");
         foreach (string invalid in new[] { first + first, first + next.Replace("2014-07", "2014-01"),
-                     first + next.Replace(" opponents='opponents-v1'", ""), first + next.Replace("2014-09", "2014-05") })
+                     first + next.Replace(" opponents='opponents-v1'", ""), first + next.Replace("2014-09", "2014-05"),
+                     first + next.Replace(adventure, adventure + adventure),
+                     first.Replace("</Era>", adventure + "</Era>") + next,
+                     first + next.Replace(adventure, ""),
+                     first.Replace(content, contentWithAdventure) + next,
+                     first + next.Replace(update, update.Replace("id='trial'", "id='unknown'")) })
         {
             bool rejected = false;
             try { ReadEraCatalog(invalid); }
@@ -434,6 +455,9 @@ internal static class StartupSaveChecks
             historyCount = profile.History.Count;
             Check(profile.UnlockedNextEra(catalog)?.Id == naxxramas, "Legend opens the next era");
             Check(profile.UnlockedNextEra(installed) == null, "a catalog entry alone does not open an era");
+            Check(profile.UnlockedNextEra(catalogWithoutNextContent) == null
+                && !profile.TryAdvanceEra(catalogWithoutNextContent, classic, naxxramas),
+                "declaring an adventure does not permit advancing into an era without playable content");
             Check(File.ReadAllText(path).Contains("<UnlockedEraId>curse-of-naxxramas</UnlockedEraId>"),
                 "earned unlock is stored independently of the current era and package readiness");
         }

@@ -8,6 +8,7 @@
     <Compile Include="../../plugin/arena/ArenaStubService.cs" />
     <Compile Include="../shared/NativeArenaBoundaryMocks.cs" Link="NativeArenaBoundaryMocks.cs" />
     <Compile Include="../../plugin/NativeHomeUI.cs" Link="NativeHomeUI.cs" />
+    <Compile Include="../../plugin/AdventureMenuFlow.cs" Link="AdventureMenuFlow.cs" />
     <Compile Include="../../plugin/NativeStrings.cs" Link="NativeStrings.cs" />
     <Compile Include="../../plugin/StatusRoutine.cs" Link="StatusRoutine.cs" />
     <Compile Include="../../plugin/ProfileStartupStatus.cs" Link="ProfileStartupStatus.cs" />
