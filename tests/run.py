@@ -206,7 +206,21 @@ SUITES += [
     Suite('transport-invariants', 'dotnet', 'engine-to-client transport: invariants over recorded and random games (long)',
           'tests/transport-invariants/TransportInvariants.csproj', args=['--strict'], needs_client=True, needs_local=(CARDDB,)),
 ]
+SUITES.append(Suite('campaign-engine', 'dotnet', 'empty engine and match-scoped catalogs using original test cards',
+                    'tests/campaign-engine/CampaignEngineTests.csproj'))
+SUITES.append(Suite('campaign-launcher', 'dotnet', 'campaign save isolation and catalog-scoped translations',
+                    'installer/SoloStone.Launcher.Tests/SoloStone.Launcher.Tests.csproj',
+                    args=['--campaign'], artifacts='campaign-launcher'))
 BY_NAME = {suite.name: suite for suite in SUITES}
+
+# These suites exercise reusable code and the empty campaign. The previous
+# release's card-dependent proofs are reproducible at the archived revision.
+CAMPAIGN_SUITES = frozenset({
+    'campaign-engine', 'campaign-launcher', 'ladder-rules', 'tier-presentation', 'fire-fx-scene',
+    'run-tool', 'installer-python', 'deck-ui', 'native-bindings-logic', 'test-control',
+    'fx-harmony', 'native-bindings',
+})
+LEGACY_REVISION = 'e24aa018e0ecc0c87736beab5be1e3d8759e7cdf'
 
 
 def say(text=''):
@@ -420,7 +434,8 @@ def main(argv=None):
     if args.list:
         width = max(len(suite.name) for suite in SUITES)
         for suite in SUITES:
-            say(f'{suite.name.ljust(width)}  [{suite.tier}]  {suite.what}')
+            tier = suite.tier if suite.name in CAMPAIGN_SUITES else 'archived'
+            say(f'{suite.name.ljust(width)}  [{tier}]  {suite.what}')
         return 0
     try:
         unknown = [name for name in args.suite if name not in BY_NAME]
@@ -428,7 +443,11 @@ def main(argv=None):
             raise Usage('unknown suite: ' + ', '.join(unknown) + ' (see --list)')
         if args.ci and args.client:
             raise Usage('--ci runs only the suites that need no client, so it cannot be combined with --client')
-        chosen = [BY_NAME[name] for name in args.suite] if args.suite else SUITES
+        archived = [name for name in args.suite if name not in CAMPAIGN_SUITES]
+        if archived:
+            raise Usage('requires the archived card catalog at ' + LEGACY_REVISION + ': ' + ', '.join(archived))
+        chosen = ([BY_NAME[name] for name in args.suite] if args.suite else
+                  [suite for suite in SUITES if suite.name in CAMPAIGN_SUITES])
         if args.ci:
             if any(suite.tier == 'client' for suite in chosen) and args.suite:
                 raise Usage('--ci cannot run a client-tier suite: ' + ', '.join(suite.name for suite in chosen if suite.tier == 'client'))

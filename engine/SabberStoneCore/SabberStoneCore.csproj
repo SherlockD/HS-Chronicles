@@ -46,10 +46,11 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="resources\Data\CampaignEras.xml" LogicalName="SabberStoneCore.Resources.CampaignEras.xml" />
-    <EmbeddedResource Include="resources\Data\OfflinePoolCatalog.xml" LogicalName="SabberStoneCore.Resources.OfflinePoolCatalog.xml" />
-    <EmbeddedResource Include="resources\Data\LegacyGenerationV1.xml" LogicalName="SabberStoneCore.Resources.LegacyGenerationV1.xml" />
+    <EmbeddedResource Include="resources\Data\OfflinePoolCatalog.xml" LogicalName="SabberStoneCore.Resources.OfflinePoolCatalog.xml" Condition="Exists('resources\Data\OfflinePoolCatalog.xml')" />
+    <EmbeddedResource Include="resources\Data\LegacyGenerationV1.xml" LogicalName="SabberStoneCore.Resources.LegacyGenerationV1.xml" Condition="Exists('resources\Data\LegacyGenerationV1.xml')" />
     <!-- CardDefs.xml and ClientOverlay.xml stay private inputs of tools/gen_card_facts.py; never embed them. -->
-    <EmbeddedResource Include="..\..\facts\violet-hold-2026-09.json" LogicalName="SabberStoneCore.Resources.Facts.violet-hold-2026-09.json" />
+    <EngineFacts Include="..\..\facts\*.json" Exclude="..\..\facts\*.*.json" />
+    <EmbeddedResource Include="@(EngineFacts)" LogicalName="SabberStoneCore.Resources.Facts.%(Filename)%(Extension)" />
     <InternalsVisibleTo Include="EngineProof" />
     <InternalsVisibleTo Include="HsSim" />
     <!-- For the AI tuning harness (sim/AiHarness), which is not in this repository yet; it will be published. -->
@@ -120,7 +121,7 @@
   <UsingTask TaskName="EngineSourceStamp" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
       <ProjectDirectory ParameterType="System.String" Required="true" />
-      <FactsFile ParameterType="System.String" Required="true" />
+      <FactsFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" />
       <OutputFile ParameterType="System.String" Required="true" />
     </ParameterGroup>
     <Task>
@@ -143,8 +144,15 @@
             found.Add(new KeyValuePair<string, string>(relative, file));
         }
         found.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
-        // The facts file comes last, named relative to the project folder.
-        found.Add(new KeyValuePair<string, string>("../../facts/violet-hold-2026-09.json", FactsFile));
+        // The facts come last, ordered by resource filename.
+        var facts = new List<KeyValuePair<string, string>>();
+        foreach (var item in FactsFiles ?? new Microsoft.Build.Framework.ITaskItem[0])
+        {
+            string path = item.GetMetadata("FullPath");
+            facts.Add(new KeyValuePair<string, string>("../../facts/" + Path.GetFileName(path), path));
+        }
+        facts.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+        found.AddRange(facts);
         var text = new StringBuilder();
         using (SHA256 sha = SHA256.Create())
         {
@@ -170,7 +178,7 @@
   </Target>
   <Target Name="GenerateEngineSourceStamp" BeforeTargets="CoreCompile">
     <!-- Hashes what the build compiles and embeds: the card file counts, the private XMLs do not, so an export without them gets the same stamp. -->
-    <EngineSourceStamp ProjectDirectory="$(MSBuildProjectDirectory)" FactsFile="$(MSBuildProjectDirectory)/../../facts/violet-hold-2026-09.json" OutputFile="$(IntermediateOutputPath)EngineSourceStamp.g.cs" />
+    <EngineSourceStamp ProjectDirectory="$(MSBuildProjectDirectory)" FactsFiles="@(EngineFacts)" OutputFile="$(IntermediateOutputPath)EngineSourceStamp.g.cs" />
     <ItemGroup><Compile Include="$(IntermediateOutputPath)EngineSourceStamp.g.cs" /></ItemGroup>
   </Target>
 </Project>

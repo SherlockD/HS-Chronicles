@@ -1,4 +1,4 @@
-﻿#region copyright
+#region copyright
 // SabberStone, Hearthstone Simulator in C# .NET Core
 // Copyright (C) 2017-2019 SabberStone Team, darkfriend77 & rnilva
 //
@@ -41,6 +41,7 @@ namespace SabberStoneCore.Loader
 		{
 			// Set cards (without behaviours)
 			Cards = (from c in cards select new { Key = c.Id, Value = c }).ToDictionary(x => x.Key, x => x.Value);
+			if (Cards.Count == 0) return;
 
 			// Add Powers
 			foreach (Card c in Cards.Values)

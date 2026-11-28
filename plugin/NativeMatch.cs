@@ -680,6 +680,9 @@ public sealed class NativeMatch
     // The NPC opponent's own pet (PROPOSED, docs/design/npc-pets.md): wire-only, resolved by the caller from the NPC's
     // identity. It never touches the pending record, profile, pet progress or any ownership.
     internal string OpponentPetCard { get; set; }
+#if ENGINE_SOURCE
+    internal SabberStoneCore.Campaigns.CampaignCardCatalog CampaignCards { get; set; }
+#endif
     private int opponentPetVariant, opponentPetEntityId, opponentPetFamilyId, cosmeticPetFamilyId;
     // Pet treats (retail "Level B", docs/design/pet-xp.md): the pinned client asks for them while NetCacheFeatures allows it
     // (NativeUIProbe sets MaxPetTreatsAllowedPerGame). The counters mirror retail's server tags on the human pet.
@@ -837,7 +840,8 @@ public sealed class NativeMatch
             SkipMulligan = false,
             History = true,
 #if ENGINE_SOURCE
-            EnableCorpses = true,
+            CampaignCards = CampaignCards,
+            EnableCorpses = CampaignCards == null,
             PoolFormat = opponentDeck?.IsEncounter == true ? SabberStoneCore.Config.GenerationFormat.Wild
                 : SabberStoneCore.Config.GenerationFormat.Standard,
             Player1Sideboards = playerDeck?.Sideboards,

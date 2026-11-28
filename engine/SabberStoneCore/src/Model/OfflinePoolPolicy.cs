@@ -169,6 +169,38 @@ namespace SabberStoneCore.Model
             public IReadOnlyList<string> Races { get; }
             public IReadOnlyList<string> DependencyIds { get; }
             public IReadOnlyDictionary<int, int> Tags { get; }
+            internal Member(Card card)
+            {
+                DbfId = card.AssetId;
+                CardId = card.Id;
+                Scope = "Standard";
+                Set = card.Set.ToString();
+                Type = card.Type.ToString();
+                Cost = card.Cost;
+                Attack = card.ATK;
+                Health = card.Health;
+                Rarity = card.Rarity.ToString();
+                switch (card[GameTag.SPELL_SCHOOL])
+                {
+                    case 0: SpellSchool = "NONE"; break;
+                    case 1: SpellSchool = "ARCANE"; break;
+                    case 2: SpellSchool = "FIRE"; break;
+                    case 3: SpellSchool = "FROST"; break;
+                    case 4: SpellSchool = "NATURE"; break;
+                    case 5: SpellSchool = "HOLY"; break;
+                    case 6: SpellSchool = "SHADOW"; break;
+                    case 7: SpellSchool = "FEL"; break;
+                    default: throw new InvalidDataException("Invalid campaign spell school: " + CardId);
+                }
+                int classes = OfflineCardPools.PrintedClassMask(card);
+                Classes = classes == 0 ? Array.AsReadOnly(new[] { OfflineCardPools.ClassName(card.Class) }) :
+                    Array.AsReadOnly(PoolRequirement.PlayableClasses.Where(name =>
+                        (classes & 1 << ((int)PoolRequirement.HeroClass(name) - 1)) != 0).ToArray());
+                Races = Array.AsReadOnly(card.Races.Select(race => race.ToString()).ToArray());
+                DependencyIds = Array.AsReadOnly(card.Entourage.ToArray());
+                Tags = new ReadOnlyDictionary<int, int>(card.Tags.ToDictionary(pair => (int)pair.Key, pair => pair.Value));
+            }
+
             internal Member(XElement row)
             {
                 DbfId = Number(row, "dbfId", 1); CardId = Required(row, "cardId");

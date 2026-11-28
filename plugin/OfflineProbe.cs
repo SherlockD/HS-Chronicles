@@ -53,6 +53,7 @@ public sealed class OfflineProbe : BaseUnityPlugin
     private float nextStatus, nextScreenshotPoll;
     private double previousUpdateEnd;
     private OfflineLaunchContext launchContext;
+    private bool emptyCampaign;
 
     private void Awake()
     {
@@ -158,8 +159,15 @@ public sealed class OfflineProbe : BaseUnityPlugin
             return;
         }
 #endif
+#if ENGINE_SOURCE
+        // Later eras cannot serve as the starting era, even if they have packaged card resources.
+        var startingEra = SabberStoneCore.Campaigns.CampaignEraCatalog.Installed
+            .Find(SabberStoneCore.Campaigns.CampaignEraCatalog.FirstEraId);
+        emptyCampaign = startingEra?.Content == null ||
+            !SabberStoneCore.Campaigns.CampaignCardCatalog.IsInstalled(startingEra.Content.CardPoolId);
+#endif
         NativePlaytest.Root = Reports + @"\";
-        ConfigureLoanerGroupPath(Root);
+        if (!emptyCampaign) ConfigureLoanerGroupPath(Root);
         StartupTiming.Mark("card-catalogs");
 #if !SOLOSTONE_INSTALLER || SOLOSTONE_TEST_HOOKS
         PlaytestQueue.KnobPath = Reports + @"\playtest-opponent";
@@ -180,10 +188,6 @@ public sealed class OfflineProbe : BaseUnityPlugin
         string runId = launch.RunId;
         Logger.LogInfo("ISOLATED identity=" + identity + " localData=" + localData + (launch.Deck ? " host=deck" : ""));
         diagnosticLog = Logger;
-        LocalProfile.DeckRepairLog = message => Logger.LogInfo(message);
-#if !STANDARD_PROOF
-        LocalProfileBackups.Log = message => diagnosticLog.LogWarning(message);
-#endif
         var harmony = new Harmony(HarmonyId);
         var loginIntent = AccessTools.Method(typeof(Network), "SetShouldBeConnectedToAurora");
         var tokenFetch = AccessTools.Method(typeof(Hearthstone.Login.DesktopLoginTokenFetcher), "GetTokenIfAvailable");
@@ -245,6 +249,18 @@ public sealed class OfflineProbe : BaseUnityPlugin
         try { forceBoardStamp = System.IO.File.GetLastWriteTimeUtc(Config.ConfigFilePath); } catch (Exception) { }
 #endif
         StartupTiming.Mark("settings-seed-config");
+        if (emptyCampaign)
+        {
+#if !STANDARD_PROOF
+            ClientChecks.HoldForCampaign();
+#endif
+            NativeProfileSelector.OpenEmptyCampaign(Logger, () => WriteLoadedMarker(identity));
+            return;
+        }
+        LocalProfile.DeckRepairLog = message => Logger.LogInfo(message);
+#if !STANDARD_PROOF
+        LocalProfileBackups.Log = message => diagnosticLog.LogWarning(message);
+#endif
         GoldenPilot.ConfigureLethalHost(launch.Deck);
         Logger.LogInfo("NPC_LETHAL_MODE host=" + (launch.Deck ? "deck" : "windows")
             + " workers=" + (GoldenPilot.ParallelLethalEnabled ? 2 : 1));
@@ -386,6 +402,15 @@ public sealed class OfflineProbe : BaseUnityPlugin
 
     private void Update()
     {
+        if (emptyCampaign)
+        {
+            try
+            {
+                if (ClientChecks.CardRecordsReady()) NativeProfileSelector.Update();
+            }
+            catch (Exception error) { Fatal(error); }
+            return;
+        }
 #if !STANDARD_PROOF
         TickSaveHold();
         if (!enabled) return;
@@ -442,20 +467,45 @@ public sealed class OfflineProbe : BaseUnityPlugin
         }
     }
 
-    private void OnGUI() { LocalLadder.Draw(); NativeBrandLabel.Draw(); NativeFpsCounter.Draw(); }
+    private void WriteLoadedMarker(string identity)
+    {
+        Action write = () => File.WriteAllText(Path.Combine(Reports, "plugin-loaded.txt"),
+            launchContext.RunId + "\n" + identity + "\n" + DateTime.UtcNow.ToString("o"));
+#if SOLOSTONE_INSTALLER
+        InstallerRuntime.Prepare(write);
+#else
+        write();
+#endif
+    }
+
+    private void OnGUI()
+    {
+        if (emptyCampaign) return;
+        LocalLadder.Draw(); NativeBrandLabel.Draw(); NativeFpsCounter.Draw();
+    }
     private void OnApplicationPause(bool paused)
     {
+        if (emptyCampaign) return;
         NativeSpellWatchdog.ApplicationPause(paused);
         ClientBridge.ChoiceApplicationPause(paused);
         if (paused) NativeCollectionStatus.FlushPendingSeen(true, true);
     }
     private void OnApplicationFocus(bool focused)
     {
+        if (emptyCampaign) return;
         NativeSpellWatchdog.ApplicationFocus(focused);
         ClientBridge.ChoiceApplicationFocus(focused);
     }
-    private void OnApplicationQuit() { ClientBridge.CloseMatchJournal(); NativeFxTelemetry.CloseDisk(); NativeCollectionStatus.FlushPendingSeen(true, true); }
-    private void OnDestroy() { DeckExperience.Shutdown(); NativeCollectionStatus.FlushPendingSeen(true, true); NativeTestControl.Shutdown(); LocalLadder.Shutdown(); }
+    private void OnApplicationQuit()
+    {
+        if (emptyCampaign) return;
+        ClientBridge.CloseMatchJournal(); NativeFxTelemetry.CloseDisk(); NativeCollectionStatus.FlushPendingSeen(true, true);
+    }
+    private void OnDestroy()
+    {
+        if (emptyCampaign) return;
+        DeckExperience.Shutdown(); NativeCollectionStatus.FlushPendingSeen(true, true); NativeTestControl.Shutdown(); LocalLadder.Shutdown();
+    }
 }
 
 // Test lanes (1-3) share the Windows account, its Unity PlayerPrefs and the native local options file with the owner's lane 0.

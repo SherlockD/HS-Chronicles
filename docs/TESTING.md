@@ -4,8 +4,10 @@ SoloStone is an unofficial offline single-player mod for Hearthstone®. It requi
 
 New to the tests? Start with the short [testing guide](TESTING-GUIDE.md): why they exist, how they fit together and how to keep them healthy.
 
-This page says which tests are in this repository, how to run them, and which ones are not here yet. Run every command
-from the repository root.
+Run every command from the repository root. The current campaign checks cover the empty card catalog, match-scoped
+catalogs with original fixtures and reusable launcher, client and game logic. See `python3 tests/run.py --list` for the
+active suites. Use Git revision `e24aa018e0ecc0c87736beab5be1e3d8759e7cdf` to run any suite marked `archived` with its
+original card resources. The catalog-dependent entries below document that release.
 
 ## Two tiers
 

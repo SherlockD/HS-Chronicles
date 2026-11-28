@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Runtime.Serialization;
 using System.Text;
 using SabberStoneCore.Enums;
+using SabberStoneCore.Campaigns;
 
 namespace SabberStoneCore.Model
 {
@@ -29,6 +30,14 @@ namespace SabberStoneCore.Model
         public IReadOnlyList<OfflinePoolPolicy.Member> Past { get; }
         public string CatalogDigest { get; }
         public string Hash { get; }
+        [field: NonSerialized] internal CampaignCardCatalog CampaignCards { get; }
+
+        internal Card CardById(string id) => CampaignCards != null ? CampaignCards.FromId(id) : Cards.FindId(id);
+        internal Card CardByAssetId(int id) => CampaignCards != null ? CampaignCards.FromAssetId(id) : Cards.FromAssetId(id);
+
+        internal Card ResolveDefinition(OfflinePoolPolicy.Member member) => CampaignCards == null
+            ? Definition(member)
+            : CardById(member.CardId) ?? throw new InvalidDataException("Unknown campaign pool card: " + member.CardId);
 
         internal static Card Definition(OfflinePoolPolicy.Member member)
         {
@@ -40,6 +49,21 @@ namespace SabberStoneCore.Model
             var qualified = card.Clone();
             qualified.Tags[GameTag.SPELL_SCHOOL] = school;
             return qualified;
+        }
+
+        internal OfflinePoolManifest(CampaignCardCatalog catalog, string hash)
+        {
+            CampaignCards = catalog;
+            PolicyVersion = "campaign/1/" + catalog.Id;
+            SamplingVersion = CurrentSamplingVersion;
+            Standard = Array.AsReadOnly(catalog.All.Where(card => card.Collectible && (
+                card.Type == CardType.MINION || card.Type == CardType.SPELL || card.Type == CardType.WEAPON ||
+                card.Type == CardType.HERO)).OrderBy(card => card.AssetId)
+                .Select(card => new OfflinePoolPolicy.Member(card)).ToArray());
+            Past = Array.Empty<OfflinePoolPolicy.Member>();
+            Sets = Array.AsReadOnly(Standard.Select(card => card.Set).Distinct().OrderBy(set => set, StringComparer.Ordinal).ToArray());
+            CatalogDigest = hash;
+            Hash = Sha256(CanonicalText());
         }
 
         internal OfflinePoolManifest(OfflinePoolPolicy policy, string policyVersion, string samplingVersion)
@@ -101,7 +125,9 @@ namespace SabberStoneCore.Model
         {
             try
             {
-                var installed = Installed;
+                const string campaignPrefix = "campaign/1/";
+                var installed = policyVersion.StartsWith(campaignPrefix, StringComparison.Ordinal)
+                    ? CampaignCardCatalog.Load(policyVersion.Substring(campaignPrefix.Length)).Pools : Installed;
                 if (policyVersion != installed.PolicyVersion || manifestHash != installed.Hash)
                     throw new SerializationException("Snapshot offline pool policy/hash missing or mismatched.");
                 return installed;

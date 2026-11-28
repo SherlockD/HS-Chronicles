@@ -81,13 +81,15 @@ static partial class Program
         }
         Json.Save(Path.Combine(root,"install.json"),loaded);
         // Uninstall: recorded client, updates, releases, state go; backups and saves stay.
-        foreach(string name in new[]{"updates","releases","state","backups"}) { Directory.CreateDirectory(Path.Combine(root,name)); File.WriteAllText(Path.Combine(root,name,"f"),"x"); }
+        foreach(string name in new[]{"updates","releases","state",PublicNames.LegacyBackupsFolder,PublicNames.BackupsFolder}) { Directory.CreateDirectory(Path.Combine(root,name)); File.WriteAllText(Path.Combine(root,name,"f"),"x"); }
         Installer.Uninstall(root,new string[0]);
         Check(!Directory.Exists(client) && !File.Exists(Path.Combine(root,"install.json")),"uninstall removes the client at its recorded path");
         Check(new[]{"updates","releases","state"}.All(n=>!Directory.Exists(Path.Combine(root,n))) && File.Exists(Path.Combine(root,"backups","f")) && File.ReadAllText(Path.Combine(saves,"profile.xml"))=="keep","uninstall keeps backups and saves");
         Refuses(()=>Installer.Uninstall(root,new string[0]),"second uninstall has no record");
         Installer.DeleteSaves(root,saves);
-        Check(!Directory.Exists(saves) && !Directory.Exists(Path.Combine(root,"backups")),"delete-saves removes saves and backups");
+        Check(!Directory.Exists(saves) && !Directory.Exists(Path.Combine(root,PublicNames.BackupsFolder))
+            && File.Exists(Path.Combine(root,PublicNames.LegacyBackupsFolder,"f")),
+            "delete-saves removes campaign data and retains archived backups");
         Directory.CreateDirectory(saves);
         // Cancel mid-copy: an owned stage and a pending record remain, Retry recopies, the source never changes.
         string cancelRoot=Path.Combine(temp,"cancel-root"), cancelClient=Path.Combine(temp,"cancel","copy");

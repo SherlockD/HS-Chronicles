@@ -436,6 +436,9 @@ internal static partial class ClientBridge
             ? new NativeMatch(Send, deck, opponent, seed, stars)
             : new NativeMatch(Send, player, opponent, seed, stars, premiumEntries) { CosmeticDeckId = PersonalDeckId(deck) };
         prepared.PlainCards = NativePlainCardsOption.Enabled;
+#if ENGINE_SOURCE
+        prepared.CampaignCards = ProfileCampaignCards(LocalLadder.Profile);
+#endif
         var defs = DefLoader.Get().GetAllEntityDefs();
         log.LogInfo("LOCAL_HERO_DEFS Fireblast=" + defs.ContainsKey("HERO_08bp"));
         foreach (string id in RequiredPaladinDefinitions)
@@ -858,8 +861,32 @@ internal static partial class ClientBridge
     }
 #endif
 
+#if ENGINE_SOURCE
+    private static SabberStoneCore.Campaigns.CampaignCardCatalog ProfileCampaignCards(LocalProfile profile)
+    {
+        if (profile == null || profile.CurrentEraId == ProfileCatalog.MetaId) return null;
+        var era = SabberStoneCore.Campaigns.CampaignEraCatalog.Installed.Find(profile.CurrentEraId);
+        if (era?.Content == null)
+            throw new InvalidOperationException("No playable card catalog for campaign era " + profile.CurrentEraId);
+        return SabberStoneCore.Campaigns.CampaignCardCatalog.Load(era.Content.CardPoolId);
+    }
+
+    private static SabberStoneCore.Campaigns.CampaignCardCatalog MatchCampaignCards =>
+        staged ? match?.Game?.CampaignCards ?? match?.CampaignCards : null;
+#endif
+
     private static bool LocalCardName(EntityDef __0, ref string __result)
     {
+#if ENGINE_SOURCE
+        var catalog = MatchCampaignCards;
+        if (catalog != null)
+        {
+            if (!LocalNativeText.TryGetCampaignNameOverride(catalog, true, __0?.GetCardId(),
+                raw => TextUtils.TransformCardText(raw), out string campaignName)) return true;
+            __result = campaignName;
+            return false;
+        }
+#endif
         if (LocalNativeText.TryGetNameOverride(NativeUIProbe.PreviewDefinitionContext,
             __0?.GetCardId(), raw => TextUtils.TransformCardText(raw), out string name))
         {
@@ -932,6 +959,16 @@ internal static partial class ClientBridge
 
     private static bool LocalRawCardText(string __0, ref string __result)
     {
+#if ENGINE_SOURCE
+        var catalog = MatchCampaignCards;
+        if (catalog != null)
+        {
+            if (!LocalNativeText.TryGetOverride(catalog, true, __0, TextUtils.GetDefaultTextVariant, out string campaignText))
+                return true;
+            __result = campaignText;
+            return false;
+        }
+#endif
         if (!LocalNativeText.TryGetOverride(staged || NativeUIProbe.Active, __0, TextUtils.GetDefaultTextVariant, out string text))
             return true;
         __result = text;

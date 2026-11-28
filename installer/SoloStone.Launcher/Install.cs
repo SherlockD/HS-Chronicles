@@ -372,7 +372,7 @@ namespace SoloStone
         public static void DeleteSaves(string root,string saveRoot) {
             string saves=Safety.Canonical(saveRoot); Safety.NoLinks(saves);
             FsOps.DeleteTree(saves);
-            FsOps.DeleteTree(Path.Combine(Safety.Canonical(root),"backups"));
+            FsOps.DeleteTree(Path.Combine(Safety.Canonical(root),PublicNames.BackupsFolder));
         }
     }
 }

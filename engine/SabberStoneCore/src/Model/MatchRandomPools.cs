@@ -83,7 +83,7 @@ namespace SabberStoneCore.Model.RandomPools
                       (!m.Tags.TryGetValue(4538, out int herald) || herald <= 0))) continue;
                 // Old Gods are left out of ordinary pools.
                 if (m.Tags.TryGetValue(4754, out int oldGod) && oldGod > 0) continue;
-                var card = OfflinePoolManifest.Definition(m);
+                var card = manifest.ResolveDefinition(m);
                 if (card == null || !card.Implemented) continue;
                 // Retail 26.0.4: cards costing three runes of any mix are never generated.
                 if (card[GameTag.COST_BLOOD] + card[GameTag.COST_FROST] + card[GameTag.COST_UNHOLY] >= 3) continue;
@@ -108,7 +108,7 @@ namespace SabberStoneCore.Model.RandomPools
             bool legacy = game.LegacyPoolReplay || game.UnversionedRandomPoolReplay;
             Census?.Invoke(source?.Card?.Id, legacy);
             if (legacy) return game.FormatType == FormatType.FT_STANDARD ? LegacyStandard : LegacyWild;
-            var manifest = game.OfflinePools ?? OfflinePoolManifest.Installed;
+            var manifest = game.OfflinePools ?? game.CampaignCards?.Pools ?? OfflinePoolManifest.Installed;
             var slot = PerManifest.GetValue(manifest, _ => new Slot());
             return slot.Pools.GetOrAdd((game.PoolFormat, destination), key => new MatchRandomPool(manifest, key.Item1, key.Item2));
         }

@@ -16,14 +16,14 @@ namespace SabberStoneCore.Model.Snapshots
     // installed card definitions. Unknown runtime closures deliberately have no fallback.
     internal sealed class ContinuationRegistry
     {
-        internal static readonly Lazy<ContinuationRegistry> Instance = new Lazy<ContinuationRegistry>(() => new ContinuationRegistry());
+        internal static readonly Lazy<ContinuationRegistry> Instance = new Lazy<ContinuationRegistry>(() => new ContinuationRegistry(Cards.All));
         private readonly Dictionary<Delegate, string> _keys = new Dictionary<Delegate, string>();
         private readonly Dictionary<string, Delegate> _definitions = new Dictionary<string, Delegate>(StringComparer.Ordinal);
         private readonly Dictionary<string, (Type type, MethodInfo method)> _handlers = new Dictionary<string, (Type, MethodInfo)>();
         private readonly Dictionary<string, Type> _recipes = new Dictionary<string, Type>(StringComparer.Ordinal);
         private readonly Dictionary<Type, string> _recipeKeys = new Dictionary<Type, string>();
 
-        private ContinuationRegistry()
+        internal ContinuationRegistry(IEnumerable<Card> cards)
         {
             foreach (Type type in typeof(Game).Assembly.GetTypes().Where(t => !t.IsAbstract && typeof(ISimpleTask).IsAssignableFrom(t) &&
                 (t.Namespace == "SabberStoneCore.Tasks" || t.Namespace == "SabberStoneCore.Tasks.SimpleTasks")))
@@ -33,7 +33,7 @@ namespace SabberStoneCore.Model.Snapshots
                 _recipeKeys.Add(type, key);
             }
             var seen = new HashSet<object>(ReferenceEquality.Instance);
-            foreach (Card card in Cards.All.OrderBy(c => c.Id, StringComparer.Ordinal))
+            foreach (Card card in cards.OrderBy(c => c.Id, StringComparer.Ordinal))
                 Visit(card, "card/" + card.Id + "/v1", seen);
             foreach (var recipe in Actions.AssembleRules.SummonRecipes)
             {

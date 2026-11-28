@@ -251,7 +251,7 @@ namespace SoloStone
         public const int Keep=3;
         static readonly Regex IdShape=new Regex(@"^\d{8}T\d{9}Z-[0-9A-Za-z.-]{1,64}$",RegexOptions.CultureInvariant);
         readonly string folder;
-        public Backups(string root) { folder=Path.Combine(root,"backups"); }
+        public Backups(string root) { folder=Path.Combine(root,PublicNames.BackupsFolder); }
         public string Folder => folder;
         public string PathOf(string id) {
             if(id==null || !IdShape.IsMatch(id) || id.Contains("..")) throw new InvalidOperationException("That backup name is not valid.");

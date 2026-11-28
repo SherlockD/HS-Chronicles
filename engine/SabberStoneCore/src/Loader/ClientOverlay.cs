@@ -33,7 +33,8 @@ namespace SabberStoneCore.Loader
 			public int OriginalDbfId;
 		}
 
-		internal static readonly Document Data = CardFacts.Embedded.Overlay;
+		internal static Document Data => CardFacts.Embedded?.Overlay ??
+			throw new InvalidDataException("Legacy card overlays are unavailable in this build.");
 
 		// The private XML, for the equality proof.
 		internal static Document Read(Stream stream)

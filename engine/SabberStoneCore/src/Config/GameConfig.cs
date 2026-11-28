@@ -13,6 +13,7 @@
 #endregion
 using SabberStoneCore.Enums;
 using SabberStoneCore.Model;
+using SabberStoneCore.Campaigns;
 using SabberStoneCore.Model.Entities;
 using System;
 using System.Collections.Generic;
@@ -220,6 +221,10 @@ namespace SabberStoneCore.Config
 		// Replay hosts supply verified historical membership; ordinary games use the installed catalog.
 		[field: NonSerialized]
 		internal OfflinePoolManifest ReplayPools { get; set; }
+
+		/// <summary>Card definitions and generation pools for a campaign match.</summary>
+		[field: NonSerialized]
+		public CampaignCardCatalog CampaignCards { get; set; }
 
 		/// <summary>
 		/// Instead of shuffling deck and drawing the top card,

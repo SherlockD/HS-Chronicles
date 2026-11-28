@@ -38,7 +38,7 @@ namespace SabberStoneCore.Model
         /// a supplied config must agree on runtime format/history/logging. Construction settings remain saved.
         /// </summary>
         public static Game LoadSnapshot(byte[] data, GameConfig config = null)
-            => LoadSnapshotWithPools(data, null, config);
+            => LoadSnapshotWithPools(data, config?.CampaignCards?.Pools, config);
 
         internal static Game LoadSnapshotWithPools(byte[] data, OfflinePoolManifest pools, GameConfig config = null)
         {

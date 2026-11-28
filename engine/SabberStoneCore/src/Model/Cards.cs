@@ -116,6 +116,15 @@ namespace SabberStoneCore.Model
 			// Set as card definitions
 
 			Data = new CardContainer();
+			if (cards.Length == 0)
+			{
+				Data.Load(cards);
+				AllStandard = AllWild = Array.AsReadOnly(Array.Empty<Card>());
+				BasicTotems = Array.Empty<Card>();
+				StandardCostMinionCards = new Dictionary<int, List<Card>>();
+				WildCostMinionCards = new Dictionary<int, List<Card>>();
+				return;
+			}
 			Data.Load(cards);
             foreach (var card in cards)
             {
@@ -342,6 +351,8 @@ namespace SabberStoneCore.Model
 			return Data.Cards[cardId];
 		}
 
+		internal static Card FindId(string cardId) => cardId != null && Data.Cards.TryGetValue(cardId, out var card) ? card : null;
+
 		/// <summary>
 		/// Returns the first collectible card that matches the provided name.
 		/// 
@@ -361,9 +372,9 @@ namespace SabberStoneCore.Model
 		/// <returns></returns>
 		public static Card FromAssetId(int assetId)
 		{
-			if (assetId == 807)
+			if (assetId == 807 && Data.Cards.Count != 0)
 				return FromId("CS2_034");
-			if (assetId == 725)
+			if (assetId == 725 && Data.Cards.Count != 0)
 				return FromId("CS2_102");
 			var index = _assetIndex;
 			if (index == null || _assetIndexCount != Data.Cards.Count)

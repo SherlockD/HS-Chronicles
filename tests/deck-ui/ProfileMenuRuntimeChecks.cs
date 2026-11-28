@@ -148,8 +148,37 @@ static partial class ProfileMenuRuntimeHarness
         private PegUIElement tooltipTraceRow;
         private TooltipZone tooltipTraceZone;
         private readonly ClickLockout lockout = new();
-        private string heading;
+        private sealed class Slice { internal GameObject Object; }
+        private static class NativeStrings { internal static string Get(string id, string fallback) => fallback; }
+        private static class Application { internal static void Quit() { } }
+        private static readonly object LabelColor = new();
+        private string heading, caption;
+        private bool emptyCampaign;
         private void Header(string value) => heading = value;
+        private UIBButton Plank(string id, string semanticId, string text, Action<object> action, bool slice)
+        {
+            var button = CreateMenuButton();
+            unitPlank ??= button;
+            rows.Add(button);
+            owned.Add(button.gameObject);
+            controls[button] = semanticId;
+            if (slice) slices.Add(button.gameObject);
+            return button;
+        }
+        private void Label(string id, string text, object color, float scale)
+        {
+            if (unitPlank == null) return;
+            caption = text;
+            slices.Add(new object());
+        }
+        internal void CheckEmptyCampaign(Action<bool, string> check)
+        {
+            emptyCampaign = true;
+            Build();
+            check(heading == "HS Chronicles" && caption == "No playable campaign eras are installed."
+                && rows.Count == 1 && slices.Count == 2 && controls.Values.SequenceEqual(new[] { "campaign.quit" }),
+                "empty campaign shows its status and only the quit action");
+        }
         private void Axes() { }
         private void FinishEdit(string value) { if (!editing) return; editing = false; commits++; committed = value; }
         private static TooltipZone ConfigureTooltip(PegUIElement button) => button.Tooltip;
@@ -223,6 +252,7 @@ static partial class ProfileMenuRuntimeHarness
     }
     internal static void Run(Action<bool, string> check)
     {
+        new NativeProfileMenu().CheckEmptyCampaign(check);
         var menu = new NativeProfileMenu();
         menu.Rebuild(false, 2); menu.Open();
         foreach (var state in new (bool Wizard, int Rows)[] { (true, 10), (true, 10), (true, 10), (false, 7), (false, 3), (true, 10) }) {

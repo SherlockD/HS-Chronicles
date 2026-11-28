@@ -347,7 +347,7 @@ namespace SabberStoneCore.Model.Entities
 			Hero[GameTag.ZONE] = (int) Enums.Zone.PLAY;
 			HeroId = Hero.Id;
             if (playerbound != null) Actions.PlayerboundHeroTags.Give(Hero, playerbound);
-			Hero.HeroPower = FromCard(this, powerCard ?? Cards.FromAssetId(Hero[GameTag.HERO_POWER]),
+			Hero.HeroPower = FromCard(this, powerCard ?? Game.CardByAssetId(Hero[GameTag.HERO_POWER]),
 				new EntityData { [GameTag.CREATOR] = Hero.Id }) as HeroPower;
 			Hero.Weapon = weapon;
 			Hero.AuraEffects = auraEffects;

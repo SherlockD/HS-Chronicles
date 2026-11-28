@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+#if !SOLOSTONE_PREBUILT_ENGINE
+using System.Runtime.CompilerServices;
+using SabberStoneCore.Campaigns;
+#endif
 using SabberStoneCore.Model;
 using EngineCard = SabberStoneCore.Model.Card;
 
@@ -16,16 +20,19 @@ internal static class LocalNativeText
         "EX1_411e", "EX1_414e", "CS1_129e", "CS2_236e", "CS2_087e", "CS2_092e",
         "EX1_360e", "EX1_382e", "EX1_619e", "EX1_366e", "EX1_355e"
     };
-    // Native (transport) ID -> engine ID, for the card file's locale texts, which are keyed by engine ID.
-    private static readonly Dictionary<string, string> EngineIdByNativeId = new Dictionary<string, string>(StringComparer.Ordinal);
-    // Quarantined cards and the tokens they make are shown through another card's native identity, so they keep its text.
-    // Keep it above TextByNativeId: static fields initialize in order, and the loop's catch would hide a null set.
-    private static readonly HashSet<string> KeepNativeText = new HashSet<string>(
-        LocalCardCatalog.QuarantinedIds.Concat(new[] { "EX1_614t", "EX1_finkle" }), StringComparer.Ordinal);
-    private static readonly Dictionary<string, string> TextByNativeId = BuildTextByNativeId();
+    private static class LegacyScope
+    {
+        internal static readonly Dictionary<string, string> EngineIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        internal static readonly Dictionary<string, string> Texts = BuildTextByNativeId(EngineIds);
+    }
+
+#if !SOLOSTONE_PREBUILT_ENGINE
+    private static readonly ConditionalWeakTable<CampaignCardCatalog, Dictionary<string, EngineCard>> campaignDefinitions =
+        new ConditionalWeakTable<CampaignCardCatalog, Dictionary<string, EngineCard>>();
+#endif
     private static string clientLocale;
 
-    internal static IReadOnlyCollection<string> SupportedIds => TextByNativeId.Keys;
+    internal static IReadOnlyCollection<string> SupportedIds => LegacyScope.Texts.Keys;
 
     internal static bool TryGetNameOverride(bool localContext, string cardId, Func<string, string> transform,
         out string name)
@@ -38,6 +45,65 @@ internal static class LocalNativeText
 
     internal static bool TryGetOverride(bool staged, string cardId, Func<string, string> defaultVariant,
         out string text) => TryGetOverride(staged, cardId, defaultVariant, ClientLocale(), out text);
+
+#if !SOLOSTONE_PREBUILT_ENGINE
+    internal static bool TryGetCampaignNameOverride(CampaignCardCatalog catalog, bool localContext, string cardId,
+        Func<string, string> transform, out string name)
+    {
+        name = null;
+        if (!localContext || transform == null) return false;
+        var card = CampaignDefinition(catalog, cardId);
+        if (string.IsNullOrEmpty(card?.Name)) return false;
+        name = transform(card.Name);
+        return true;
+    }
+
+    internal static bool TryGetOverride(CampaignCardCatalog catalog, bool staged, string cardId,
+        Func<string, string> defaultVariant, out string text) =>
+        TryGetOverride(catalog, staged, cardId, defaultVariant, ClientLocale(), out text);
+
+    internal static bool TryGetOverride(CampaignCardCatalog catalog, bool staged, string cardId,
+        Func<string, string> defaultVariant, string locale, out string text)
+    {
+        text = null;
+        if (!staged || defaultVariant == null) return false;
+        try
+        {
+            var definition = CampaignDefinition(catalog, cardId);
+            if (definition == null || UsesClientBuilder(definition)) return false;
+            return TryRender(RawForDefinition(catalog.Id, definition, locale, out _), defaultVariant, out text);
+        }
+        catch
+        {
+            text = null;
+            return false;
+        }
+    }
+
+    internal static string RawFor(CampaignCardCatalog catalog, string cardId, string locale, out LocalizedCardText.Status status)
+    {
+        status = LocalizedCardText.Status.English;
+        var definition = CampaignDefinition(catalog, cardId);
+        return definition == null ? null : RawForDefinition(catalog.Id, definition, locale, out status);
+    }
+
+    private static string RawForDefinition(string catalogId, EngineCard definition, string locale, out LocalizedCardText.Status status)
+    {
+        status = LocalizedCardText.Lookup(catalogId, locale, definition.Id, definition.Text, out string translated);
+        return status == LocalizedCardText.Status.Localized ? translated : definition.Text;
+    }
+
+    private static EngineCard CampaignDefinition(CampaignCardCatalog catalog, string nativeId)
+    {
+        if (catalog == null || string.IsNullOrEmpty(nativeId)) return null;
+        // A text request carries only the native ID. Use the client default when multiple cards share that ID.
+        var definitions = campaignDefinitions.GetValue(catalog, current => current.All
+            .GroupBy(card => NativeMatch.TransportCardId(card.Id), StringComparer.Ordinal)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal));
+        return definitions.TryGetValue(nativeId, out var card) ? card : null;
+    }
+#endif
 
     // The client's language, as the client reports it (Localization.GetActualLocale); the Options > Language choice when the client
     // cannot answer. Null for English and for anything that is not one of the client's locales. Remembered once it is settled:
@@ -83,7 +149,7 @@ internal static class LocalNativeText
 
     // The engine id a native (transport) id stands for, or null when SoloStone has no text for it.
     internal static string EngineIdFor(string nativeId) =>
-        nativeId != null && EngineIdByNativeId.TryGetValue(nativeId, out string engineId) ? engineId : null;
+        nativeId != null && LegacyScope.EngineIds.TryGetValue(nativeId, out string engineId) ? engineId : null;
 
     // Raw text before the variant pick: the locale's own text for this card while the engine still plays the English it was made
     // from, else the engine's English. `status` says which and why.
@@ -92,12 +158,14 @@ internal static class LocalNativeText
     internal static string RawFor(string cardId, string locale, out LocalizedCardText.Status status)
     {
         status = LocalizedCardText.Status.English;
-        if (string.IsNullOrEmpty(cardId) || !TextByNativeId.TryGetValue(cardId, out string english)) return null;
-        if (locale != null && EngineIdByNativeId.TryGetValue(cardId, out string engineId))
+        if (string.IsNullOrEmpty(cardId) || !LegacyScope.Texts.TryGetValue(cardId, out string english)) return null;
+#if SOLOSTONE_PREBUILT_ENGINE
+        if (locale != null && LegacyScope.EngineIds.TryGetValue(cardId, out string engineId))
         {
-            status = LocalizedCardText.Lookup(locale, engineId, english, out string localized);
+            status = LocalizedCardText.Lookup("violet-hold-2026-09", locale, engineId, english, out string localized);
             if (status == LocalizedCardText.Status.Localized) return localized;
         }
+#endif
         return english;
     }
 
@@ -115,13 +183,8 @@ internal static class LocalNativeText
             // Native modular builders compose text; base templates lack parts until assembly.
             string engineId = EngineIdFor(cardId);
             var definition = engineId == null ? null : Cards.FromId(engineId);
-            if (definition != null && (definition.Tags.ContainsKey(SabberStoneCore.Enums.GameTag.MODULAR_ENTITY_PART_1)
-                || definition.Tags.ContainsKey(SabberStoneCore.Enums.GameTag.MODULAR_ENTITY_PART_2)
-                || IsBuilderTemplate(definition.Text))) return false;
-            string rawText = RawFor(cardId, locale);
-            if (string.IsNullOrEmpty(rawText)) return false;
-            text = NormalizeRawText(defaultVariant(rawText));
-            return !string.IsNullOrEmpty(text);
+            if (UsesClientBuilder(definition)) return false;
+            return TryRender(RawFor(cardId, locale), defaultVariant, out text);
         }
         catch
         {
@@ -130,17 +193,40 @@ internal static class LocalNativeText
         }
     }
 
+    private static bool UsesClientBuilder(EngineCard definition) => definition != null &&
+        (definition.Tags.ContainsKey(SabberStoneCore.Enums.GameTag.MODULAR_ENTITY_PART_1)
+        || definition.Tags.ContainsKey(SabberStoneCore.Enums.GameTag.MODULAR_ENTITY_PART_2)
+        || IsBuilderTemplate(definition.Text));
+
+    private static bool TryRender(string rawText, Func<string, string> defaultVariant, out string text)
+    {
+        text = string.IsNullOrEmpty(rawText) ? null : NormalizeRawText(defaultVariant(rawText));
+        return !string.IsNullOrEmpty(text);
+    }
+
     internal static string NormalizeRawText(string text) =>
         text != null && text.EndsWith(ObsoleteSpellDamageSuffix, StringComparison.Ordinal)
             ? text.Substring(0, text.Length - ObsoleteSpellDamageSuffix.Length)
             : text;
 
-    private static Dictionary<string, string> BuildTextByNativeId()
+    private static Dictionary<string, string> BuildTextByNativeId(Dictionary<string, string> engineIds)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Cards shown through another native identity keep the client's text.
+        var keepNativeText = new HashSet<string>(
+            LocalCardCatalog.QuarantinedIds.Concat(new[] { "EX1_614t", "EX1_finkle" }), StringComparer.Ordinal);
+
+        void Add(EngineCard card)
+        {
+            if (card == null) return;
+            string native = NativeMatch.TransportCardId(card.Id);
+            result[native] = card.Text;
+            engineIds[native] = card.Id;
+        }
+
         try
         {
-            foreach (var card in LocalEconomy.Catalog) Add(result, card);
+            foreach (var card in LocalEconomy.Catalog) Add(card);
         }
         catch { }
         var heroesAndPowers = LocalDecks.PlayerHeroes.SelectMany(id => new[] {
@@ -149,7 +235,7 @@ internal static class LocalNativeText
         foreach (string id in heroesAndPowers.Concat(AdditionalEngineIds).Concat(LocalDecks.TestStandardCardIds).Concat(LocalCardCatalog.SupplementalGeneratedIds)
                      .Concat(LocalDecks.TestLoaners.SelectMany(deck => deck.CardIds)).Concat(LocalCardCatalog.LegacyGeneratedPublicIds).Concat(LocalCardCatalog.CardStateGeneratedIds))
         {
-            try { Add(result, Cards.FromId(id)); }
+            try { Add(Cards.FromId(id)); }
             catch { }
         }
         // Every other card the engine plays: tokens, generated cards and enchantments (Kazakus' trial parts, the cracked
@@ -159,23 +245,15 @@ internal static class LocalNativeText
         {
             try
             {
-                if (card.Implemented && !result.ContainsKey(card.Id) && !KeepNativeText.Contains(card.Id)
+                if (card.Implemented && !result.ContainsKey(card.Id) && !keepNativeText.Contains(card.Id)
                     && NativeMatch.TransportCardId(card.Id) == card.Id)
                 {
                     result[card.Id] = card.Text;
-                    EngineIdByNativeId[card.Id] = card.Id;
+                    engineIds[card.Id] = card.Id;
                 }
             }
             catch { }
         }
         return result;
-    }
-
-    private static void Add(Dictionary<string, string> result, EngineCard card)
-    {
-        if (card == null) return;
-        string native = NativeMatch.TransportCardId(card.Id);
-        result[native] = card.Text;
-        EngineIdByNativeId[native] = card.Id;
     }
 }

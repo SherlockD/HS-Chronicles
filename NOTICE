@@ -137,13 +137,10 @@ Unity Mono class libraries (Windows set) 6000.3.11f1  (BepInEx\unstripped_corlib
 5. Card data
 ------------
 
-The card data file (facts/violet-hold-2026-09.json; one file per card set) holds card IDs, costs, stats, tags,
-card names and English card text, taken from Hearthstone. The names and text belong to Blizzard Entertainment.
-SoloStone claims no rights in them, and none of the licences in this repository covers them. They are here only so
-the rules engine can show and play the cards. The file leaves out flavour text, artist credits and other
-languages. Thirteen sibling files (facts/violet-hold-2026-09.<locale>.json) hold only the card text, in the other
-languages the game client supports, so SoloStone shows a card's text in the client's language. The same terms apply to
-them. facts/README.md repeats this beside the file.
+The archived Violet Hold revision (e24aa018e0ecc0c87736beab5be1e3d8759e7cdf) carries card facts and
+localised card text from Hearthstone. The names and text belong to Blizzard Entertainment and are outside the
+scope of the licences in this repository. The current campaign reads card definitions from explicitly selected
+catalogs. The data format is described in facts/README.md.
 
 Card names and card text also appear in our code and data files, as identifiers, in lists and in comments.
 

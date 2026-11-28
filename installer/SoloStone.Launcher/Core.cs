@@ -27,7 +27,10 @@ namespace SoloStone
         internal const string PluginFile="SoloStone.Plugin.dll";
         internal const string PluginPayloadPath="BepInEx/plugins/"+PluginFile;
         // Inside the default install root, so the copy must stay out of it: the folder is reserved in Safety.RootFolders.
-        internal const string SavesFolder="saves";
+        internal const string LegacySavesFolder="saves";
+        internal const string SavesFolder="campaign-saves";
+        internal const string LegacyBackupsFolder="backups";
+        internal const string BackupsFolder="campaign-backups";
         internal static string SaveRoot(string localAppData) => Path.Combine(localAppData,"SoloStone",SavesFolder);
     }
     // Strict reader for install.json, on one code path for launcher and plugin. Objects, arrays, strings, whole numbers, booleans, null.
@@ -247,7 +250,7 @@ namespace SoloStone
             if (path.Length>=2 && path[1]==':') return path.Substring(0,2);
             return path[0]=='/'?"/":null;
         }
-        public static readonly string[] RootFolders={"app","state","backups","updates","releases","reports",PublicNames.SavesFolder};
+        public static readonly string[] RootFolders={"app","state",PublicNames.LegacyBackupsFolder,PublicNames.BackupsFolder,"updates","releases","reports",PublicNames.LegacySavesFolder,PublicNames.SavesFolder};
         // Pure location rules for a client copy, shared by the wizard's path check, setup and every record load.
         public static string ClientPathProblem(string client,string root,string source,string saveRoot) {
             try {

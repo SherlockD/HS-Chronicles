@@ -20,6 +20,7 @@ internal static class NativeProfileSelector
     private static UIBButton menuButton;
     private static bool startupPending, startupRevealQueued, quitting, reconciled;
     private static string startupError, startupErrorHeader;
+    private static Action emptyCampaignOpened;
 
     internal static bool BlocksHome => startupPending || popup != null && popup.IsShown();
 #if !SOLOSTONE_RELEASE
@@ -72,6 +73,13 @@ internal static class NativeProfileSelector
         if (startupPending && launch.Startup?.Notice != null) { startupError = launch.Startup.Notice; startupErrorHeader = launch.Startup.NoticeHeader; }
     }
 
+    internal static void OpenEmptyCampaign(ManualLogSource logger, Action opened)
+    {
+        log = logger;
+        startupPending = true;
+        emptyCampaignOpened = opened;
+    }
+
     internal static void Update()
     {
         popup?.SampleTooltipTrace();
@@ -88,6 +96,17 @@ internal static class NativeProfileSelector
                 var reveal = new JobDefinition("Offline.ProfileSelectorReady", StartupShellReady(), Array.Empty<IJobDependency>());
                 Processor.QueueJob("Offline.HideSplashForProfileSelector", splash.Hide(reveal), Array.Empty<IJobDependency>());
             }
+            return;
+        }
+        if (emptyCampaignOpened != null)
+        {
+            if (popup == null) popup = new GameObject("HSChroniclesCampaignMenu").AddComponent<NativeProfileMenu>();
+            popup.OpenEmptyCampaign();
+            startupPending = false;
+            Action opened = emptyCampaignOpened;
+            emptyCampaignOpened = null;
+            StartupTiming.Milestone("empty-campaign-menu");
+            opened();
             return;
         }
         Open(true);
@@ -462,6 +481,7 @@ internal sealed class NativeProfileMenu : ButtonListMenu
     private readonly Dictionary<PegUIElement, string> controls = new Dictionary<PegUIElement, string>();
     private readonly HashSet<PegUIElement> selectedControls = new HashSet<PegUIElement>();
     private bool startup, wizard, pacePage, difficultyPage, paceFromOptions, ownsNativeDialog, loading, cheatsOpen, editing, manage;
+    private bool emptyCampaign;
     private int page;
     private string saveName, pendingName;
     private ProfileOptions options;
@@ -505,6 +525,13 @@ internal sealed class NativeProfileMenu : ButtonListMenu
     {
         startup = fromStartup; wizard = pacePage = difficultyPage = paceFromOptions = loading = manage = false; page = 0; Build(); Show();
         ProfileFormKit.Request(() => { if (this != null && IsShown() && !loading) Build(); }, true);
+    }
+
+    internal void OpenEmptyCampaign()
+    {
+        startup = emptyCampaign = true;
+        Build();
+        Show();
     }
 
     internal void OpenPace()
@@ -556,9 +583,17 @@ internal sealed class NativeProfileMenu : ButtonListMenu
         paceMeshes.Clear();
         owned.Clear(); rows.Clear(); slices.Clear(); beforeLayout.Clear(); afterLayout.Clear(); unsized.Clear(); fieldRows.Clear(); fieldsContent = null; fieldsLayout = null; controls.Clear(); selectedControls.Clear();
         nameText = null; nameColor = null; unitPlank = null; cheatList = null; cheatRows = 0; cheatPitch = 0; unitWorld = 0; unitScale = 1; kitScale = 0;
-        Header(wizard ? "Create profile" : pacePage ? (difficultyPage ? "NPC Difficulty" : "Pace") : "Choose profile");
+        Header(emptyCampaign ? "HS Chronicles" : wizard ? "Create profile" : pacePage ? (difficultyPage ? "NPC Difficulty" : "Pace") : "Choose profile");
         Axes();
-        if (wizard) BuildWizard(ProfileFormKit.Ready); else if (pacePage) { if (difficultyPage) BuildDifficulty(ProfileFormKit.Ready); else BuildPace(ProfileFormKit.Ready); } else BuildSlots(ProfileFormKit.Ready);
+        if (emptyCampaign)
+        {
+            var quit = Plank("CampaignQuit", "campaign.quit", NativeStrings.Get("GLOBAL_QUIT", "Quit"), _ => Application.Quit(), false);
+            Label("CampaignEmpty", "No playable campaign eras are installed.", LabelColor, 1);
+            slices.Add(new Slice { Object = quit.gameObject });
+        }
+        else if (wizard) BuildWizard(ProfileFormKit.Ready);
+        else if (pacePage) { if (difficultyPage) BuildDifficulty(ProfileFormKit.Ready); else BuildPace(ProfileFormKit.Ready); }
+        else BuildSlots(ProfileFormKit.Ready);
         if (shown) Show();
     }
 

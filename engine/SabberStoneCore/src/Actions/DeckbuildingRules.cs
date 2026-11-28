@@ -51,7 +51,11 @@ namespace SabberStoneCore.Actions
                 foreach (string id in row.Value)
                     PayloadRules.StoreCard(owner, Cards.FromId(row.Key).AssetId, Cards.FromId(id), 0);
         }
-        public static IPlayable[] Remaining(Controller owner, string source) => PayloadRules.Entries(owner, Cards.FromId(source).AssetId);
+        public static IPlayable[] Remaining(Controller owner, string source)
+        {
+            var definition = owner.Game.FindCardById(source);
+            return definition == null ? Array.Empty<IPlayable>() : PayloadRules.Entries(owner, definition.AssetId);
+        }
         internal static void Prepare(Game game)
         {
             foreach (var owner in new[] { game.Player1, game.Player2 })

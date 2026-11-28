@@ -25,8 +25,10 @@ namespace SabberStoneCore.Model
 		internal HistoryDefinition(Card card)
 		{
 			_source = card;
-			_card = ReferenceEquals(card, Cards.FromId(card.Id)) ? card : Freeze(card);
+			_card = IsCatalogCard(card) ? card : Freeze(card);
 		}
+		private static bool IsCatalogCard(Card card) => ReferenceEquals(card,
+			card.CampaignCatalog != null ? card.CampaignCatalog.FromId(card.Id) : Cards.FindId(card.Id));
 		// Match the snapshot graph, retaining only immutable catalogue/callback recipe identities.
 		private static Card Freeze(Card card)
 		{
@@ -37,7 +39,7 @@ namespace SabberStoneCore.Model
 				var type = value.GetType();
 				if (type.IsPrimitive || type.IsEnum || value is string || value is Delegate || value is System.Type || value is MemberInfo)
 					return value;
-				if (!ReferenceEquals(value, card) && value is Card nested && ReferenceEquals(nested, Cards.FromId(nested.Id)))
+				if (!ReferenceEquals(value, card) && value is Card nested && IsCatalogCard(nested))
 					return value;
 				if (seen.TryGetValue(value, out var existing)) return existing;
 				var clone = typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(value, null);
@@ -53,16 +55,14 @@ namespace SabberStoneCore.Model
 			return (Card)Copy(card);
 		}
 		internal bool Matches(Card card) => ReferenceEquals(_source,card) || ReferenceEquals(_card,card);
-		public Card Materialize() => SnapshotCodec.DecodeDefinition(SnapshotCodec.EncodeDefinition(_card, detached: true));
+		public Card Materialize() => SnapshotCodec.DecodeDefinition(SnapshotCodec.EncodeDefinition(_card, detached: true), _card.CampaignCatalog);
 		internal Card ReadDefinition() => _card;
-		internal void Validate()
+		internal void Validate(Game game)
 		{
 			if (_card == null || string.IsNullOrEmpty(_card.Id))
 				throw new SerializationException("Invalid history card definition.");
 			_card.ValidateHistoryDisplays();
-			Card installed;
-			try { installed = Cards.FromId(_card.Id); }
-			catch (KeyNotFoundException e) { throw new SerializationException("Unknown history card definition.", e); }
+			Card installed = game.FindCardById(_card.Id);
 			if (installed == null || installed.AssetId != DbfId || string.IsNullOrEmpty(Data))
 				throw new SerializationException("Invalid history card definition identity.");
 		}
@@ -474,7 +474,7 @@ namespace SabberStoneCore.Model
 			Require(_initial.All(p=>Owner(p.Value) && game.IdEntityDic.ContainsKey(p.Key)) && _consumers.All(c=>!string.IsNullOrEmpty(c)));
 			Require(_definitions.All(d=>d!=null) && _definitions.Distinct().Count()==_definitions.Length);
 			var cards=new Dictionary<HistoryDefinition,Card>();
-			foreach(var d in _definitions) { d.Validate(); cards.Add(d,d.ReadDefinition()); }
+			foreach(var d in _definitions) { d.Validate(game); cards.Add(d,d.ReadDefinition()); }
 			Require(_board!=null && _board.All(p=>game.IdEntityDic.TryGetValue(p.Key,out var entity) && entity is Entities.Minion
 				&& entity.Zone==entity.Controller.BoardZone && p.Value!=null && p.Value.Incarnation>0 && p.Value.Incarnation<NextIncarnation));
 			var plays=new Dictionary<long,CardPlayedFact>(); var casts=new Dictionary<long,SpellCastFact>();

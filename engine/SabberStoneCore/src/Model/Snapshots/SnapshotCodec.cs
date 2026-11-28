@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
 using System.Text;
+using SabberStoneCore.Campaigns;
 using SabberStoneCore.Config;
 using SabberStoneCore.Kettle;
 using SabberStoneCore.Model.Entities;
@@ -22,7 +23,8 @@ namespace SabberStoneCore.Model.Snapshots
         internal const int MaxBytes = 64 * 1024 * 1024;
         private readonly Dictionary<object, int> _written = new Dictionary<object, int>(ReferenceEquality.Instance);
         private readonly List<object> _read = new List<object>();
-        private readonly ContinuationRegistry _continuations = ContinuationRegistry.Instance.Value;
+        private CampaignCardCatalog _campaignCards;
+        private ContinuationRegistry _continuations => _campaignCards?.Continuations ?? ContinuationRegistry.Instance.Value;
         // 0: historical; 1: batch-13; 2: Health cost; 3: displays; 4: held forms/pools; 5: targeting; 6: listener trigger predicates; 7: Discover fallback.
         private byte _definitionVersion = 7;
         private bool _definitionNeedsUpgrade;
@@ -57,7 +59,7 @@ namespace SabberStoneCore.Model.Snapshots
 
         private static string EncodeDefinition(Card card, byte version)
         {
-            var codec = new SnapshotCodec { _definitionVersion = version };
+            var codec = new SnapshotCodec { _definitionVersion = version, _campaignCards = card.CampaignCatalog };
             using (var stream = new MemoryStream())
             using (codec._writer = new BinaryWriter(stream, Encoding.UTF8, true))
             {
@@ -73,11 +75,12 @@ namespace SabberStoneCore.Model.Snapshots
                 return Convert.ToBase64String(stream.ToArray());
             }
         }
-        internal static Card DecodeDefinition(string data)
+        internal static Card DecodeDefinition(string data, CampaignCardCatalog campaignCards = null)
         {
             var bytes = Convert.FromBase64String(data);
             if (bytes.Length > MaxBytes) throw new SerializationException("History definition exceeds size limit.");
-            var codec = new SnapshotCodec { _definitionVersion = bytes.Length > 0 && bytes[0] == 255 ? (byte)1 : (byte)0 };
+            var codec = new SnapshotCodec { _definitionVersion = bytes.Length > 0 && bytes[0] == 255 ? (byte)1 : (byte)0,
+                _campaignCards = campaignCards };
             using (var stream = new MemoryStream(bytes, false))
             using (codec._reader = new BinaryReader(stream, Encoding.UTF8, true))
             {
@@ -93,12 +96,14 @@ namespace SabberStoneCore.Model.Snapshots
                 }
                 var card = codec.Read(0) as Card;
                 if (card == null || stream.Position != stream.Length) throw new SerializationException("Invalid history definition.");
+                card.CampaignCatalog = campaignCards;
                 return card;
             }
         }
 
         internal byte[] Save(Game game)
         {
+            _campaignCards = game.CampaignCards;
             using (var stream = new MemoryStream())
             using (_writer = new BinaryWriter(stream, Encoding.UTF8, true))
             {
@@ -142,6 +147,7 @@ namespace SabberStoneCore.Model.Snapshots
                     var manifest = pools ?? restoreRoot?.OfflinePools ?? OfflinePoolManifest.ValidateInstalled(policyVersion, manifestHash);
                     if (manifest.PolicyVersion != policyVersion || manifest.Hash != manifestHash)
                         throw new SerializationException("Snapshot offline pool policy/hash missing or mismatched.");
+                    _campaignCards = manifest.CampaignCards;
                     var game = Read(0) as Game ?? throw new SerializationException("Snapshot root must be a game.");
                     if (version == 4) {
                         var reveals = Read(0) as Dictionary<int, PowerHistoryEntity>
@@ -193,7 +199,7 @@ namespace SabberStoneCore.Model.Snapshots
             // Legacy card scripts use reference equality (notably Kazakus exclusion sampling).
             // Only generated cards are materialized; catalogue identities must stay canonical.
             if (value is Card card && (ReferenceEquals(card, Card.CardGame) || ReferenceEquals(card, Card.CardPlayer) ||
-                ReferenceEquals(card, Cards.FromId(card.Id))))
+                ReferenceEquals(card, FindDefinition(card.Id))))
             {
                 _writer.Write((byte)Kind.CardDefinition);
                 _writer.Write(ReferenceEquals(card, Card.CardGame) ? "$game" : ReferenceEquals(card, Card.CardPlayer) ? "$player" : card.Id);
@@ -318,7 +324,7 @@ namespace SabberStoneCore.Model.Snapshots
             {
                 string id = _reader.ReadString();
                 return id == "$game" ? Card.CardGame : id == "$player" ? Card.CardPlayer :
-                    Cards.FromId(id) ?? throw new SerializationException("Unknown snapshot card definition: " + id);
+                    FindDefinition(id) ?? throw new SerializationException("Unknown snapshot card definition: " + id);
             }
             if (kind == Kind.Reference)
             {
@@ -420,7 +426,10 @@ namespace SabberStoneCore.Model.Snapshots
                 field.SetValue(instance, value);
             }
             if (instance is GameConfig config && _runtimeLogging.HasValue) config.Logging = _runtimeLogging.Value;
+            if (instance is Card card) card.CampaignCatalog = _campaignCards;
             return binding;
         }
+
+        private Card FindDefinition(string id) => _campaignCards != null ? _campaignCards.FromId(id) : Cards.FindId(id);
     }
 }

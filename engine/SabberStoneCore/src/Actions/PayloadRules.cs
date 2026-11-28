@@ -82,6 +82,8 @@ namespace SabberStoneCore.Actions
         }
         internal static void CaptureTracking(Game game)
         {
+            // Campaign effects declare their own compatible definitions, without the retail payload declarations.
+            if (game.CampaignCards != null) return;
             // Decide before any copy/death: a later generated consumer needs the earlier events too.
             var pending = new Stack<Card>(game.Player1.DeckCards.Concat(game.Player2.DeckCards));
             var seen = new HashSet<string>(StringComparer.Ordinal);

@@ -95,7 +95,7 @@ namespace SabberStoneCore.Tasks.SimpleTasks
 						break;
 					case EntityType.OP_HERO_POWER:
 						toBeCopied = Entity.FromCard(c,
-							Cards.FromId(controller.Opponent.Hero.HeroPower.Card.Id));
+							game.CardById(controller.Opponent.Hero.HeroPower.Card.Id));
                         PayloadRules.MarkCopy(controller.Opponent.Hero.HeroPower, toBeCopied);
 						if (addToStack)
 						{
@@ -109,7 +109,7 @@ namespace SabberStoneCore.Tasks.SimpleTasks
 
 						for (int i = 0; i < _amount; i++)
                         {
-                            var copy = Entity.FromCard(c, Cards.FromId(weapon.Card.Id));
+                            var copy = Entity.FromCard(c, game.CardById(weapon.Card.Id));
                             PayloadRules.MarkCopy(weapon, copy);
                             result.Add(copy);
                         }

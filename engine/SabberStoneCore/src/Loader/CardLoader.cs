@@ -30,8 +30,10 @@ namespace SabberStoneCore.Loader
 		public Card[] Load()
 		{
 			// Get definitions from the embedded per-meta card file
-			var cards = CardFacts.Embedded.Cards.Select(e => Build(e, overlay: false)).ToArray();
-            return ClientOverlay.AddTo(cards, ClientOverlay.Data);
+			var facts = CardFacts.Embedded;
+			if (facts == null) return Array.Empty<Card>();
+			var cards = facts.Cards.Select(e => Build(e, overlay: false)).ToArray();
+            return ClientOverlay.AddTo(cards, facts.Overlay);
         }
 
 		// Private tools and tests still build cards from the XML; the engine itself does not.

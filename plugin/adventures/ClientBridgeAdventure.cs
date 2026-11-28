@@ -48,6 +48,9 @@ internal static partial class ClientBridge
         int seed = Guid.NewGuid().GetHashCode() & int.MaxValue;
         var prepared = new NativeMatch(Send, deck, encounter.BossHero, encounter.BossDeck, encounter.ScenarioId, seed, entries)
         { CosmeticDeckId = PersonalDeckId(deckKey), PlainCards = NativePlainCardsOption.Enabled };
+#if ENGINE_SOURCE
+        prepared.CampaignCards = ProfileCampaignCards(profile);
+#endif
         ClearLocalStage();
         string attemptId = profile.BeginAdventureAttempt(deckKey, deck, seed, encounter.DefinitionVersion);
         adventure = new AdventureSession(profile, prepared, attemptId);

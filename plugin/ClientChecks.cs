@@ -92,16 +92,24 @@ internal static class ClientChecks
     }
 
     // Awake finished without a block: V2 waits for the client's card records, and the save hold waits for V2.
+    internal static void HoldForCampaign()
+    {
+        ClientCheckReport.Write(reports, runId, ClientCheckReport.Held, "campaign", "No playable campaign eras are installed.");
+    }
+
     internal static void ArmCardCheck(float now)
     {
         armed = true; deadline = now + ClientCheckReport.CardWaitSeconds;
         ClientCheckReport.Write(reports, runId, ClientCheckReport.Held, "cards", null);
     }
 
+    internal static bool CardRecordsReady() =>
+        GameDbf.IsLoaded && DefLoader.Get()?.HasLoadedEntityDefs() == true && GameDbf.GetIndex() != null;
+
     internal static Step Tick(float now)
     {
         if (!armed) return Step.Waiting;
-        if (!GameDbf.IsLoaded || DefLoader.Get() == null || !DefLoader.Get().HasLoadedEntityDefs() || GameDbf.GetIndex() == null)
+        if (!CardRecordsReady())
         {
             if (now < deadline) return Step.Waiting;
             armed = false;

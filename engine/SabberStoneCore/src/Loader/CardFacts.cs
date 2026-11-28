@@ -8,12 +8,12 @@ using SabberStoneCore.Model;
 
 namespace SabberStoneCore.Loader
 {
-	// The per-meta card file (facts/README.md). Parsed once, in the Cards static constructor.
+	// The per-catalog card file (facts/README.md).
 	// A closed-schema reader: Unity's Mono lacks a usable JSON serializer, and a general parser costs more than the XML did.
 	internal static class CardFacts
 	{
 		internal const string Meta = "violet-hold-2026-09";
-		private const string Resource = "SabberStoneCore.Resources.Facts." + Meta + ".json";
+		internal const string ResourcePrefix = "SabberStoneCore.Resources.Facts.";
 
 		/// <summary>One card definition, before the overlay rules and Card's preprocessing.</summary>
 		internal sealed class Entity
@@ -24,6 +24,7 @@ namespace SabberStoneCore.Loader
 			public Dictionary<PlayReq, int> Requirements;
 			public string[] Entourage;
 			public Tag[] ReferencedTags;
+			public string EffectId;
 		}
 
 		internal sealed class Document
@@ -31,9 +32,15 @@ namespace SabberStoneCore.Loader
 			public string Meta;
 			public Entity[] Cards;
 			public ClientOverlay.Document Overlay;
+			public string CoinId;
 		}
 
-		internal static readonly Document Embedded = Read(typeof(CardFacts).Assembly.GetManifestResourceStream(Resource), Meta);
+		private static readonly Lazy<Document> Legacy = new Lazy<Document>(() =>
+		{
+			var stream = typeof(CardFacts).Assembly.GetManifestResourceStream(ResourcePrefix + Meta + ".json");
+			return stream == null ? null : Read(stream, Meta);
+		});
+		internal static Document Embedded => Legacy.Value;
 
 		internal static Document Read(Stream stream, string meta)
 		{
@@ -42,17 +49,21 @@ namespace SabberStoneCore.Loader
 			using (var bytes = new MemoryStream())
 			{
 				stream.CopyTo(bytes);
-				return new Reader(Encoding.UTF8.GetString(bytes.GetBuffer(), 0, (int)bytes.Length)).ReadDocument(meta);
+				return Read(bytes.ToArray(), meta);
 			}
 		}
+
+		internal static Document Read(byte[] bytes, string meta, bool campaign = false) =>
+			new Reader(Encoding.UTF8.GetString(bytes), campaign).ReadDocument(meta);
 
 		private sealed class Reader
 		{
 			private readonly string _json;
+			private readonly bool _campaign;
 			private int _at;
 			private readonly List<Tag> _tags = new List<Tag>(32);
 
-			internal Reader(string json) { _json = json; }
+			internal Reader(string json, bool campaign) { _json = json; _campaign = campaign; }
 
 			internal Document ReadDocument(string meta)
 			{
@@ -71,13 +82,14 @@ namespace SabberStoneCore.Loader
 							ReadArray(() => cards.Add(ReadRow(null)));
 							result.Cards = cards.ToArray();
 							break;
-						case "overlay": result.Overlay = ReadOverlay(); break;
+						case "overlay" when !_campaign: result.Overlay = ReadOverlay(); break;
+						case "coin" when _campaign: result.CoinId = Str(); break;
 						default: throw Bad("unknown key " + key);
 					}
 				} while (Next('}'));
 				SkipSpace();
 				if (_at != _json.Length) throw Bad("trailing data");
-				if (schema != 1 || result.Meta != meta || result.Cards == null || result.Overlay == null)
+				if (schema != 1 || result.Meta != meta || result.Cards == null || (!_campaign && result.Overlay == null))
 					throw new InvalidDataException("Invalid card file header for meta " + meta);
 				return result;
 			}
@@ -128,6 +140,7 @@ namespace SabberStoneCore.Loader
 						case "name": name = Str(); break;
 						case "text": text = Str(); break;
 						case "textHash": SkipString(); break; // For the client drift check only.
+						case "effect" when _campaign: entity.EffectId = Str(); break;
 						case "tags": tags = Pairs(); break;
 						case "refs": entity.ReferencedTags = Pairs(); break;
 						case "reqs":

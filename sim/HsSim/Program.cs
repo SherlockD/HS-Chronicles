@@ -54,7 +54,10 @@ public static class Program
         CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
         try
         {
-            if (args.Length == 0) throw new ArgumentException("usage: hs build|check|sim|goldens|fuzz|replay (see sim/README.md)");
+            if (args.Length == 0) throw new ArgumentException("usage: hs campaign|sim|goldens|fuzz|replay (see README.md)");
+#if SOURCE_ENGINE
+            if (args[0] == "campaign") return CampaignPlaytest.Run(args[1..]);
+#endif
             if (args[0] == "goldens")
             {
                 if (args.Length == 2 && args[1] == "rerecord") throw new UsageException(RerecordUsage);

@@ -276,6 +276,12 @@ public static class OfflineGuard
         if (installedRoot != null) saves = PublicNames.SaveRoot(localData) + @"\";
 #endif
 #endif
+#if ENGINE_SOURCE && !SOLOSTONE_RELEASE
+#if SOLOSTONE_INSTALLER
+        if (installedRoot == null)
+#endif
+            saves = Path.Combine(saves, "campaign") + @"\";
+#endif
         string profile = saves
             + (candidate ? @"tests\" + StandardSnapshot + @"\" : lane == 0 ? "" : @"lanes\" + lane + @"\") + "profile.xml";
         // Windows path semantics are checked on Windows; selector tests also run on macOS.

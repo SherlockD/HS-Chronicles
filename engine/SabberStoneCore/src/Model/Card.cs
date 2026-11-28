@@ -91,6 +91,9 @@ namespace SabberStoneCore.Model
 
 		}
 
+		[field: NonSerialized]
+		internal Campaigns.CampaignCardCatalog CampaignCatalog { get; set; }
+
 		internal Card(string id, int assetId, Tag[] tags,
 			Dictionary<PlayReq, int> playRequirements, string[] entourage, Tag[] refTags, bool preserveText = false)
 		{

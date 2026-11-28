@@ -3,6 +3,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using SabberStoneCore.Actions;
 using SabberStoneCore.Enums;
 
@@ -12,8 +13,13 @@ namespace SabberStoneCore.Model
     {
         private static readonly CardClass[] PlayableClasses = PoolRequirement.PlayableClasses.Select(PoolRequirement.HeroClass).ToArray();
         private static readonly int PlayableClassMask = PlayableClasses.Aggregate(0, (mask, c) => mask | 1 << ((int)c - 1));
-        private static readonly ConcurrentDictionary<(string, CardClass, OfflinePoolFilter, int, PoolDestination, bool, int), IReadOnlyList<Card>> Cache =
-            new ConcurrentDictionary<(string, CardClass, OfflinePoolFilter, int, PoolDestination, bool, int), IReadOnlyList<Card>>();
+        private sealed class CandidateCache
+        {
+            internal readonly ConcurrentDictionary<(CardClass, OfflinePoolFilter, int, PoolDestination, bool, int), IReadOnlyList<Card>> Results =
+                new ConcurrentDictionary<(CardClass, OfflinePoolFilter, int, PoolDestination, bool, int), IReadOnlyList<Card>>();
+        }
+        private static readonly ConditionalWeakTable<OfflinePoolManifest, CandidateCache> Cache =
+            new ConditionalWeakTable<OfflinePoolManifest, CandidateCache>();
 
         public static int PrintedClassMask(Card source)
         {
@@ -36,13 +42,14 @@ namespace SabberStoneCore.Model
             if (!Enum.IsDefined(typeof(PoolDestination), destination)) throw new ArgumentOutOfRangeException(nameof(destination));
             // Runtime definitions may keep another card's class under a neutral generated-token ID.
             int classes = allowDiscoverFallback && filter.DiscoverFallback && filter.ClassMode == PoolClassMode.ControllerAndNeutral
-                ? (sourceClassMask ?? PrintedClassMask(Cards.FromAssetId(sourceDbfId))) & PlayableClassMask : 0;
-            return Cache.GetOrAdd((manifest.Hash, heroClass, filter, sourceDbfId, destination, allowDiscoverFallback, classes), _ => {
-                int sourceIdentity = Cards.FromAssetId(sourceDbfId)?.Identity ?? sourceDbfId;
+                ? (sourceClassMask ?? PrintedClassMask(manifest.CardByAssetId(sourceDbfId))) & PlayableClassMask : 0;
+            var cache = Cache.GetValue(manifest, _ => new CandidateCache());
+            return cache.Results.GetOrAdd((heroClass, filter, sourceDbfId, destination, allowDiscoverFallback, classes), _ => {
+                int sourceIdentity = manifest.CardByAssetId(sourceDbfId)?.Identity ?? sourceDbfId;
                 var eligible = (filter.Scope == PoolScope.Wild ? manifest.Standard.Concat(manifest.Past).OrderBy(m => m.DbfId)
                     : filter.Scope == PoolScope.Standard ? (IEnumerable<OfflinePoolPolicy.Member>)manifest.Standard : manifest.Past)
                 // The source's reprints are the source too (#225).
-                .Where(m => !IsSource(m.DbfId, sourceDbfId, sourceIdentity) &&
+                .Where(m => !IsSource(manifest, m.DbfId, sourceDbfId, sourceIdentity) &&
                     // Colossal bodies may be generated off-board, never selected for a direct summon/transform.
                     // Tag 2247 marks a Colossal body. Tag 4538 marks a Herald Colossal, which is rejected from every pool.
                     (!m.Tags.TryGetValue(2247, out int colossal) || colossal <= 0 ||
@@ -55,7 +62,7 @@ namespace SabberStoneCore.Model
                     // Unpinned empty-pool fallback; never fill a nonempty hero pool with source-class cards.
                     selected = eligible.Where(m => PlayableClasses.Any(c => (classes & 1 << ((int)c - 1)) != 0 && Matches(m, c, filter))).ToArray();
                 }
-                return Array.AsReadOnly(selected.Select(OfflinePoolManifest.Definition).ToArray());
+                return Array.AsReadOnly(selected.Select(manifest.ResolveDefinition).ToArray());
             });
         }
 
@@ -66,8 +73,8 @@ namespace SabberStoneCore.Model
             return game.OfflinePools ?? throw new InvalidOperationException("Offline pools require StartGame.");
         }
 
-        private static bool IsSource(int dbfId, int sourceDbfId, int sourceIdentity) =>
-            dbfId == sourceDbfId || sourceDbfId != 0 && Cards.FromAssetId(dbfId)?.Identity == sourceIdentity;
+        private static bool IsSource(OfflinePoolManifest manifest, int dbfId, int sourceDbfId, int sourceIdentity) =>
+            dbfId == sourceDbfId || sourceDbfId != 0 && manifest.CardByAssetId(dbfId)?.Identity == sourceIdentity;
 
         public static IReadOnlyList<Card> Candidates(Game game, CardClass heroClass,
             OfflinePoolFilter filter, int sourceDbfId, PoolDestination destination = PoolDestination.Hand, int? sourceClassMask = null) =>

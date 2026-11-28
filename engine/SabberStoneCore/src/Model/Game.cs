@@ -12,6 +12,7 @@
 // GNU Affero General Public License for more details.
 #endregion
 using SabberStoneCore.Actions;
+using SabberStoneCore.Campaigns;
 using SabberStoneCore.Config;
 using SabberStoneCore.Enchants;
 using SabberStoneCore.Enums;
@@ -122,6 +123,14 @@ namespace SabberStoneCore.Model
 		public int NextCloneIndex { get; set; } = 1;
 		[field: NonSerialized]
 		public OfflinePoolManifest OfflinePools { get; private set; }
+		public CampaignCardCatalog CampaignCards => OfflinePools?.CampaignCards ?? _gameConfig.CampaignCards;
+
+		internal Card FindCardById(string id) => CampaignCards != null ? CampaignCards.FromId(id) : Cards.FindId(id);
+
+		public Card CardById(string id) => FindCardById(id) ??
+			throw new KeyNotFoundException("Card is unavailable in this match: " + id);
+
+		public Card CardByAssetId(int id) => CampaignCards != null ? CampaignCards.FromAssetId(id) : Cards.FromAssetId(id);
 
 		internal void RestoreOfflinePools(OfflinePoolManifest manifest) => OfflinePools = manifest;
 		internal bool LegacyPoolReplay => _gameConfig.LegacyPoolReplay;
@@ -298,6 +307,16 @@ namespace SabberStoneCore.Model
 				[GameTag.CARDTYPE] = (int)CardType.GAME
 			})
 		{
+			if (gameConfig.CampaignCards != null)
+			{
+				if (gameConfig.ReplayPools != null || gameConfig.LegacyPoolReplay || gameConfig.UnversionedRandomPoolReplay)
+					throw new ArgumentException("Campaign card definitions cannot be combined with legacy replay pools.", nameof(gameConfig));
+				if (gameConfig.Player1Sideboards?.Count > 0 || gameConfig.Player2Sideboards?.Count > 0)
+					throw new ArgumentException("Sideboards are unavailable in campaign matches.", nameof(gameConfig));
+				gameConfig = gameConfig.Clone();
+				gameConfig.Player1Deck = gameConfig.Player1Deck?.Select(card => ResolveCampaignCard(gameConfig, card)).ToList();
+				gameConfig.Player2Deck = gameConfig.Player2Deck?.Select(card => ResolveCampaignCard(gameConfig, card)).ToList();
+			}
 			Seed = gameConfig.RandomSeed ?? CreateSeed();
 			Random = new Util.DeepCloneableRandom(Seed);
 			IdEntityDic = new EntityList(75);
@@ -368,10 +387,10 @@ namespace SabberStoneCore.Model
 
 			if (setupHeroes)
 			{
-				_players[0].AddHeroAndPower(gameConfig.Player1HeroCard ?? Cards.HeroCard(gameConfig.Player1HeroClass));
+				_players[0].AddHeroAndPower(MatchHero(gameConfig.Player1HeroCard, gameConfig.Player1HeroClass));
 				_players[0].BaseClass = _players[0].HeroClass;
 
-				_players[1].AddHeroAndPower(gameConfig.Player2HeroCard ?? Cards.HeroCard(gameConfig.Player2HeroClass));
+				_players[1].AddHeroAndPower(MatchHero(gameConfig.Player2HeroCard, gameConfig.Player2HeroClass));
 				_players[1].BaseClass = _players[1].HeroClass;
 			}
 
@@ -397,14 +416,28 @@ namespace SabberStoneCore.Model
 				Player2.DeckCards.Add(p);
 				FromCard(Player2, p, null, Player2.DeckZone);
 			});
-            DeckbuildingRules.Bind(Player1, gameConfig.Player1Sideboards, gameConfig.FormatType);
-            DeckbuildingRules.Bind(Player2, gameConfig.Player2Sideboards, gameConfig.FormatType);
+            if (CampaignCards == null)
+            {
+                DeckbuildingRules.Bind(Player1, gameConfig.Player1Sideboards, gameConfig.FormatType);
+                DeckbuildingRules.Bind(Player2, gameConfig.Player2Sideboards, gameConfig.FormatType);
+            }
 			if (gameConfig.DrawWithRandom)
 			{
 				gameConfig.Shuffle = false;
 				_players[0].DeckZone.DrawWithRandom = true;
 				_players[1].DeckZone.DrawWithRandom = true;
 			}
+		}
+
+		private static Card ResolveCampaignCard(GameConfig config, Card card) =>
+			config.CampaignCards.FromId(card.Id) ?? throw new ArgumentException("Card is unavailable in this campaign: " + card.Id);
+
+		private Card MatchHero(Card submitted, CardClass heroClass)
+		{
+			if (CampaignCards == null) return submitted ?? Cards.HeroCard(heroClass);
+			var hero = submitted == null ? CampaignCards.DefaultHero(heroClass) : CardById(submitted.Id);
+			if (hero?.Type != CardType.HERO) throw new InvalidOperationException("No starting hero in campaign for " + heroClass);
+			return hero;
 		}
 
 		/// <summary> A copy constructor. </summary>
@@ -805,7 +838,7 @@ namespace SabberStoneCore.Model
 		{
 			if (OfflinePools == null)
 			{
-				OfflinePools = _gameConfig.ReplayPools ?? OfflinePoolManifest.Installed;
+				OfflinePools = CampaignCards?.Pools ?? _gameConfig.ReplayPools ?? OfflinePoolManifest.Installed;
 				// Filling consumes RNG; pin first, preserving player 1/player 2/start draw order.
 				if (_gameConfig.FillDecks)
 				{
@@ -915,7 +948,7 @@ namespace SabberStoneCore.Model
 					// 4th card for second player
 					Deal(p);
 
-					IPlayable coin = FromCard(FirstPlayer.Opponent, Cards.FromId("GAME_005"), new EntityData
+					IPlayable coin = FromCard(FirstPlayer.Opponent, CampaignCards?.Coin ?? Cards.FromId("GAME_005"), new EntityData
 					{
 						[GameTag.ZONE] = (int)Enums.Zone.HAND,
 						[GameTag.CARDTYPE] = (int)CardType.SPELL,

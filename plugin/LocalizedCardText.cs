@@ -2,19 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 
 // SoloStone's frozen card text in the client's language (facts/README.md, "Locale files"). A translation is used only while the
-// engine still plays the English text it was made from (its Key); otherwise the card shows the engine's English. For a card the engine
-// rewrites to the client's current text, the file's translation is of that text and its Key is of the engine's English. One file per non-English locale,
-// embedded in the plugin; only the running locale's file is ever read, and only on first use. Pure (no Unity, no engine types),
-// so the launcher tests run it. Keyed by engine card ID; LocalNativeText maps the client's native ID to it.
+// current catalog's English matches its key. Each catalog's locale file is read on first use.
+// LocalNativeText maps the client's transport ID to the catalog's card ID.
 // A closed-schema reader for the same reason CardFacts is one: Unity's Mono has no usable JSON serializer.
 internal static class LocalizedCardText
 {
-    internal const string Meta = "violet-hold-2026-09";
     internal const string English = "enUS";
     private static readonly object gate = new object();
-    private static readonly Dictionary<string, Dictionary<string, Entry>> loaded = new Dictionary<string, Dictionary<string, Entry>>(StringComparer.Ordinal);
+    private static readonly Regex catalogIdPattern = new Regex(@"\A[a-z0-9]+(?:-[a-z0-9]+)*\z");
+    private static readonly Dictionary<(string CatalogId, string Locale), Dictionary<string, Entry>> loaded =
+        new Dictionary<(string, string), Dictionary<string, Entry>>();
 
     // A translation and the key of the English text it translates (Key). Used only while the engine still plays that English text.
     internal struct Entry { internal string Key, Text; }
@@ -24,7 +24,7 @@ internal static class LocalizedCardText
     // Opens a locale file by its resource name; null when there is none. The plugin reads its assembly, the tests read facts/.
     internal static Func<string, Stream> Open = name => typeof(LocalizedCardText).Assembly.GetManifestResourceStream(name);
 
-    internal static string ResourceName(string locale) => "SoloStone.Facts." + Meta + "." + locale + ".json";
+    internal static string ResourceName(string catalogId, string locale) => "SoloStone.Facts." + catalogId + "." + locale + ".json";
 
     // The locale the card text follows: the client's own, with enGB as enUS. Null for English and for anything that is not
     // one of the client's 14 locales, so nothing odd is ever used as a file name.
@@ -79,13 +79,14 @@ internal static class LocalizedCardText
     }
 
     // The translation to use for a card whose engine text is `engineText`, and why not when there is none.
-    internal static Status Lookup(string locale, string engineId, string engineText, out string raw)
+    internal static Status Lookup(string catalogId, string locale, string engineId, string engineText, out string raw)
     {
         raw = null;
         locale = Normalize(locale);
         if (locale == null) return Status.English;
         if (string.IsNullOrEmpty(engineId)) return Status.NoEntry;
-        var texts = Load(locale);
+        if (catalogId == null || !catalogIdPattern.IsMatch(catalogId)) return Status.NoFile;
+        var texts = Load(catalogId, locale);
         if (texts == null) return Status.NoFile;
         if (!texts.TryGetValue(engineId, out Entry entry) || string.IsNullOrEmpty(entry.Text)) return Status.NoEntry;
         // The engine rewrites some cards after load (Configure hooks); a translation of the old text would say something else.
@@ -95,30 +96,31 @@ internal static class LocalizedCardText
     }
 
     // Null when the locale has no usable file. A failure is remembered, so a broken file is not re-read on every card.
-    internal static Dictionary<string, Entry> Load(string locale)
+    private static Dictionary<string, Entry> Load(string catalogId, string locale)
     {
         lock (gate)
         {
-            if (loaded.TryGetValue(locale, out var cached)) return cached;
+            var key = (catalogId, locale);
+            if (loaded.TryGetValue(key, out var cached)) return cached;
             Dictionary<string, Entry> texts = null;
             try
             {
-                using (var stream = Open(ResourceName(locale)))
-                    if (stream != null) texts = Read(stream, locale);
+                using (var stream = Open(ResourceName(catalogId, locale)))
+                    if (stream != null) texts = Read(stream, catalogId, locale);
             }
             catch (Exception) { texts = null; }
-            loaded[locale] = texts;
+            loaded[key] = texts;
             return texts;
         }
     }
 
     internal static void Reset() { lock (gate) loaded.Clear(); }
 
-    internal static Dictionary<string, Entry> Read(Stream stream, string locale)
+    internal static Dictionary<string, Entry> Read(Stream stream, string catalogId, string locale)
     {
         string json;
         using (var reader = new StreamReader(stream, new UTF8Encoding(false), false)) json = reader.ReadToEnd();
-        return new Reader(json).Document(locale);
+        return new Reader(json).Document(catalogId, locale);
     }
 
     private sealed class Reader
@@ -128,7 +130,7 @@ internal static class LocalizedCardText
 
         internal Reader(string text) { json = text; }
 
-        internal Dictionary<string, Entry> Document(string locale)
+        internal Dictionary<string, Entry> Document(string catalogId, string locale)
         {
             Dictionary<string, Entry> texts = null;
             int schema = 0;
@@ -149,7 +151,8 @@ internal static class LocalizedCardText
             } while (Next('}'));
             Space();
             if (at != json.Length) throw Bad("trailing data");
-            if (schema != 2 || meta != Meta || fileLocale != locale || texts == null) throw Bad("not the " + locale + " file of " + Meta);
+            if (schema != 2 || meta != catalogId || fileLocale != locale || texts == null)
+                throw Bad("not the " + locale + " file of " + catalogId);
             return texts;
         }
 

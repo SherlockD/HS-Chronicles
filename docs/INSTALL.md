@@ -126,7 +126,7 @@ yours, the SoloStone version, update status, **Play**, **Roll back**, the update
 - **Roll back** returns to the previous version, only if that version can read your current saves. Otherwise the
   window says progress since the update would be lost and offers the backup taken before the update. Your
   current saves are moved aside first, never deleted.
-- Backups are in `%LOCALAPPDATA%\SoloStone\backups`. The newest three stay.
+- Campaign backups are in `%LOCALAPPDATA%\SoloStone\campaign-backups`. The newest three stay.
 
 ## SoloStone settings in Options
 
@@ -179,7 +179,7 @@ in the new one. You can switch Battle.net back afterwards: the copy keeps the fi
 - Your Hearthstone folder. It is only read.
 - Battle.net, its settings and your Blizzard account.
 - Windows Firewall, apart from rules named `SoloStone-<install id>-...`, one per program in the copy.
-- Your saves, in `%LOCALAPPDATA%\SoloStone\saves`. Update, rollback and uninstall keep them. The launcher's Uninstall button deletes
+- Your campaign saves, in `%LOCALAPPDATA%\SoloStone\campaign-saves`. Update, rollback and uninstall keep them. The launcher's Uninstall button deletes
   them only if you tick "Also delete my saves" and confirm; uninstalling from Apps & features always keeps them.
 - The registry, except the standard "Apps & features" entry and what the copy writes itself. The copy has its own
   company name (`SoloStone Offline Mods`), so the game writes `HKCU\Software\SoloStone Offline Mods\Hearthstone`
@@ -197,7 +197,7 @@ are SoloStone's own, then remove the rules and the offline copy, and then the ap
 deleted whole, including anything you put there.** Your saves stay unless you use the launcher's Uninstall button
 and tick "Also delete my saves", which also deletes your save backups.
 
-Otherwise left behind in `%LOCALAPPDATA%\SoloStone`: `backups\` (your save backups) and `reports\` (logs and launch
+Otherwise left behind in `%LOCALAPPDATA%\SoloStone`: `campaign-backups\` (your campaign save backups) and `reports\` (logs and launch
 markers, which include your Windows user name). Delete that folder by hand if you do not want them.
 
 ## "Windows Firewall is switched off for the network adapter"

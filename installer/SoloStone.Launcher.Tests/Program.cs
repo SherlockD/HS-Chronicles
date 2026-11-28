@@ -48,6 +48,23 @@ static partial class Program
             if (args.Contains("--retry")) { EarlyFailures(temp); ReusedBackups(temp); LastSmallRound(temp); FailingSwaps(temp); FinalRoundRelease(temp); KillThenRetry(temp); BusyFiles(temp); Console.WriteLine("PASS " + count + " retry checks"); return 0; }
             if (args.Contains("--preflight")) { AppOnlyPreflight(temp); Console.WriteLine("PASS " + count + " app preflight checks"); return 0; }
             if (args.Contains("--text")) { LocalizedTextTests(temp); Console.WriteLine("PASS " + count + " localized card text checks"); return 0; }
+            if (args.Contains("--campaign")) {
+                string archive = Path.Combine(temp, "archive");
+                string campaignRoot = Path.Combine(temp, "current");
+                Directory.CreateDirectory(campaignRoot);
+                string campaignSaves = PublicNames.SaveRoot(temp);
+                Check(Path.GetFileName(campaignSaves) == PublicNames.SavesFolder &&
+                    PublicNames.SavesFolder != PublicNames.LegacySavesFolder, "campaign saves have their own directory");
+                string previous = new Backups(archive).Create(campaignSaves, null, "previous");
+                Directory.Move(new Backups(archive).Folder, Path.Combine(campaignRoot, PublicNames.LegacyBackupsFolder));
+                var campaignBackups = new Backups(campaignRoot);
+                Check(!campaignBackups.List().Any() && !Directory.Exists(campaignBackups.PathOf(previous)) &&
+                    Directory.Exists(Path.Combine(campaignRoot, PublicNames.LegacyBackupsFolder, previous)),
+                    "the campaign backup store cannot list or restore archived backups");
+                LocalizedTextTests(temp);
+                Console.WriteLine("PASS " + count + " campaign launcher and localization checks");
+                return 0;
+            }
             if (args.Contains("--policy")) { ClientPolicyTests(temp); Console.WriteLine("PASS " + count + " policy checks"); return 0; }
             // Fast loop for window work: dotnet run -- --gui
             if (args.Contains("--gui")) { GuiTests(); HookTests(temp); GuiBoundaryTests(); Console.WriteLine("PASS " + count + " window checks"); return 0; }
